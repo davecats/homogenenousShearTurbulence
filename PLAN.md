@@ -512,7 +512,7 @@ the RK start-up transient, with eps from the compact derivatives.
 | WP3 GPU | done; CPU = GPU to 1e-13, rank counts bit-identical, 4 x A100 on HoreKA |
 | WP3b pressure | done; Taylor-Green test |
 | WP4 HoreKA jobs and timings | done; 256^3 0.145 s/step and 512^3 0.99 s/step on 4 A100 (README) |
-| WP5 validation against hst-main and Sekimoto et al. | in progress |
+| WP5 validation against hst-main and Sekimoto et al. | side-by-side done (section 8); long-run statistics in progress |
 | WP6 y decomposition, NCCL | not started |
 
 Performance note: the small default deck (64x128x64) runs at 0.18 s/step
@@ -535,3 +535,21 @@ left zero.  The nonlinear forcing of eta is checked separately against
 its closed form (`test_forcing`, 3e-4 = O(dt)), and Taylor-Green vortices
 in two orientations decay exactly with the nonlinear terms on
 (`test_taylorgreen`, 7e-6).
+
+**Side by side with `hst-main` (WP5).**  Both codes were started from the
+same random field (ours, written by `tests/to_cpl_field.py` in the CPL
+layout and read by `scddns` through `Vfield=`) on the `scddns.in` box
+(nx = 96, 32 spanwise modes, 191 points over ly = 2, Re = 1000, S = 1),
+fixed step 0.002, nonlinear.  Box-averaged energy and Reynolds stress:
+
+| t | q2 hst | q2 CPL | rel. diff | uv hst | uv CPL | rel. diff |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.02 | 0.720601 | 0.720599 | 2e-6 | 0.033396 | 0.033394 | 3e-5 |
+| 0.10 | 0.709871 | 0.709862 | 1e-5 | 0.030103 | 0.030096 | 2e-4 |
+| 0.20 | 0.696121 | 0.696100 | 3e-5 | 0.024652 | 0.024636 | 6e-4 |
+| 0.30 | 0.681737 | 0.681701 | 5e-5 | 0.016932 | 0.016909 | 1e-3 |
+
+The remaining difference is at the level of the two codes' dealiasing
+sizes and the CPL centred-difference dissipation; the CPL run needed
+about 11 s/step on 4 CPU ranks against 0.66 s/step here on a shared
+RTX 3060.
