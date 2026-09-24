@@ -1,0 +1,6 @@
+! Benchmark deck: 256x256x256 dealiased grid (nx = nz = 127 stored modes, ny = 256),
+! 20 fixed steps, no output.  Used for the timings in README.md.
+&mesh  nx = 127, ny = 256, nz = 127, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .false. /
+&time_control  deltat = 0.001, cflmax = 0.0, t_max = 1e9, nstep = 20, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 8.0 /

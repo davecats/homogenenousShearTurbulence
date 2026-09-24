@@ -28,10 +28,10 @@ module hst_linsolve
   private
   public :: init_linsolve, free_linsolve, solve_lines, solve_component, apply_dy
   public :: A, X, Y1, Y2, nlines_max
-  public :: KIND_D2V, KIND_ETA, KIND_D0
+  public :: KIND_D2V, KIND_ETA, KIND_POISSON
 
   integer(C_INT), parameter :: line_chunk = 16
-  integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_D0 = 3
+  integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_POISSON = 3
   complex(C_DOUBLE_COMPLEX), allocatable, save :: A(:, :, :), X(:, :), Y1(:, :), Y2(:, :)
   integer(C_INT), save :: nlines_max
 
@@ -147,14 +147,18 @@ contains
     end do
   end subroutine penta_substitute
 
-  ! Assemble and solve one implicit system for component comp of V, whose
-  ! interior rows hold the right-hand side on entry and the solution on exit:
-  !   KIND_D2V :  lambda (D2 - k2 D0) - ni (D4 - 2 k2 D2 + k2^2 D0)
-  !   KIND_ETA :  lambda D0 - ni (D2 - k2 D0)
-  ! The (0,0) mode of KIND_D2V is singular and is set to zero.
-  subroutine solve_component(kind, lambda, comp)
-    integer(C_INT), intent(in) :: kind, comp
+  ! Assemble and solve one implicit system for a field with the layout of a
+  ! component of V (pass e.g. V(:, :, :, 2)), whose interior rows hold the
+  ! right-hand side on entry and the solution on exit:
+  !   KIND_D2V     :  lambda (D2 - k2 D0) - ni (D4 - 2 k2 D2 + k2^2 D0)
+  !   KIND_ETA     :  lambda D0 - ni (D2 - k2 D0)
+  !   KIND_POISSON :  D2 - k2 D0                       (lambda unused)
+  ! The (0,0) mode of KIND_D2V is singular and is set to zero; that of
+  ! KIND_POISSON is singular too and is left untouched for the caller.
+  subroutine solve_component(kind, lambda, field)
+    integer(C_INT), intent(in) :: kind
     real(C_DOUBLE), intent(in) :: lambda
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
     real(C_DOUBLE) :: shift, coef
     complex(C_DOUBLE_COMPLEX) :: ph, wrap
@@ -165,7 +169,7 @@ contains
       ncol = 2*nz + 1
       nl = (ix1 - ix0 + 1)*ncol
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, V, der, k2, ni, lambda, kind, comp, ix0, ix1, nz, ny, ncol, alfa0, shift) &
+      !$omp shared(A, X, field, der, k2, ni, lambda, kind, ix0, ix1, nz, ny, ncol, alfa0, shift) &
       !$omp private(ix, iz, iy, j, il, ph, wrap, coef)
       do ix = ix0, ix1
         do iz = -nz, nz
@@ -176,29 +180,33 @@ contains
               if (kind == KIND_D2V) then
                 coef = lambda*(der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)) - &
                        ni*(der(iy, 3, j) - 2.0d0*k2(iz, ix)*der(iy, 2, j) + k2(iz, ix)*k2(iz, ix)*der(iy, 0, j))
-              else
+              else if (kind == KIND_ETA) then
                 coef = lambda*der(iy, 0, j) - ni*(der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j))
+              else
+                coef = der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)
               end if
               wrap = 1.0d0
               if (iy + j >= ny) wrap = ph
               if (iy + j < 0) wrap = conjg(ph)
               A(il, iy, j) = coef*wrap
             end do
-            X(il, iy) = V(iy, iz, ix, comp)
+            X(il, iy) = field(iy, iz, ix)
           end do
         end do
       end do
       call solve_lines(nl)
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, V, kind, comp, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
+      !$omp shared(X, field, kind, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
-            if (kind == KIND_D2V .and. ix == 0 .and. iz == 0) then
-              V(iy, iz, ix, comp) = 0.0d0
+            if (ix == 0 .and. iz == 0 .and. kind == KIND_D2V) then
+              field(iy, iz, ix) = 0.0d0
+            else if (ix == 0 .and. iz == 0 .and. kind == KIND_POISSON) then
+              continue
             else
-              V(iy, iz, ix, comp) = X(il, iy)
+              field(iy, iz, ix) = X(il, iy)
             end if
           end do
         end do

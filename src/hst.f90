@@ -26,6 +26,7 @@ program hst
   use hst_equations
   use hst_io
   use hst_stats
+  use hst_pressure
 #ifdef HAVE_CUDA
   use omp_lib
 #endif
@@ -86,6 +87,8 @@ program hst
       if (has_terminal) print '(A,F12.5)', '   writing '//trim(fname)//' at time', time
       !$omp target update from(V)
       call restart_write(trim(fname))
+      write (fname, '(A,I0,A)') 'Dati.cart.', ifield, '.p.out'
+      call write_pressure(trim(fname))
     end if
     if (crossed(dt_save)) then
       if (has_terminal) print '(A,F12.5)', '   writing Dati.cart.out at time', time
@@ -96,7 +99,7 @@ program hst
 
     t1 = MPI_Wtime()
     elapsed = elapsed + (t1 - t0)
-    if (has_terminal .and. mod(istep, 50_C_SIZE_T) == 0) &
+    if (has_terminal .and. (mod(istep, 50_C_SIZE_T) == 0 .or. istep <= 5)) &
       write (*, '(A,I0,A,F9.5,A,F12.2,A)') '   step ', istep, ': ', t1 - t0, ' s/step, ', elapsed, ' s elapsed'
   end do
 

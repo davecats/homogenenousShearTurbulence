@@ -4,7 +4,8 @@
 !   nx ny nz  alfa0 beta0 ly re S time
 ! followed by the complex array (ny, 2*nz+1, nx+1, 3) of (u, v, w) modes,
 ! rows 0..ny-1 only (the ghost rows are images and are rebuilt after a
-! read).  Written and read collectively with MPI-IO.
+! read).  Written and read collectively with MPI-IO.  A pressure snapshot
+! (field_write) has the same header and one component, (ny, 2*nz+1, nx+1).
 !
 ! From channel/src/io/restart_io.f90.
 module hst_io
@@ -12,12 +13,12 @@ module hst_io
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
-  use hst_mpi, only: file_view_type, memory_type
+  use hst_mpi, only: file_view_type, memory_type, file_view_type1, memory_type1
   use hst_initial, only: generate_initial_field
 
   implicit none
   private
-  public :: restart_read, restart_write
+  public :: restart_read, restart_write, field_write
 
   integer(MPI_OFFSET_KIND), parameter :: header_bytes = 3*C_INT + 6*C_DOUBLE
 
@@ -76,5 +77,24 @@ contains
     call MPI_File_write_all(fh, V, 1, memory_type, status, ierr)
     call MPI_File_close(fh, ierr)
   end subroutine restart_write
+
+  ! Writes one field with the layout of a component of V (host copy), with
+  ! the same header as a restart file.
+  subroutine field_write(filename, field)
+    character(len=*), intent(in) :: filename
+    complex(C_DOUBLE_COMPLEX), intent(in) :: field(ny0 - 2:, -nz:, nx0:)
+    type(MPI_File) :: fh
+    type(MPI_Status) :: status
+    integer :: ierr
+
+    call MPI_File_open(MPI_COMM_WORLD, trim(filename), ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), MPI_INFO_NULL, fh, ierr)
+    if (has_terminal) then
+      call MPI_File_write(fh, [nx, ny, nz], 3, MPI_INTEGER, status, ierr)
+      call MPI_File_write(fh, [alfa0, beta0, ly, re, S, time], 6, MPI_DOUBLE_PRECISION, status, ierr)
+    end if
+    call MPI_File_set_view(fh, header_bytes, MPI_DOUBLE_COMPLEX, file_view_type1, 'native', MPI_INFO_NULL, ierr)
+    call MPI_File_write_all(fh, field, 1, memory_type1, status, ierr)
+    call MPI_File_close(fh, ierr)
+  end subroutine field_write
 
 end module hst_io

@@ -21,14 +21,15 @@ module hst_mpi
   private
 
   public :: setup_decomposition, free_mpi, transpose_zTOx, transpose_xTOz
-  public :: file_view_type, memory_type
+  public :: file_view_type, memory_type, file_view_type1, memory_type1
 
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: sendbuf(:), recvbuf(:)
   integer(C_INT), save :: sendcount
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
   ! MPI-IO: how the field of this rank sits in the file and in memory.
-  type(MPI_Datatype), save :: file_view_type, memory_type
+  type(MPI_Datatype), save :: file_view_type, memory_type        ! three components
+  type(MPI_Datatype), save :: file_view_type1, memory_type1      ! one component (pressure)
   integer :: ierr
 
 contains
@@ -80,6 +81,12 @@ contains
     call MPI_Type_create_subarray(ndims, [ny + 4, 2*nz + 1, nxB, 3], [ny, 2*nz + 1, nxB, 3], &
                                   [2, 0, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memory_type, ierr)
     call MPI_Type_commit(memory_type, ierr)
+    call MPI_Type_create_subarray(3, [ny, 2*nz + 1, nx + 1], [ny, 2*nz + 1, nxB], &
+                                  [0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, file_view_type1, ierr)
+    call MPI_Type_commit(file_view_type1, ierr)
+    call MPI_Type_create_subarray(3, [ny + 4, 2*nz + 1, nxB], [ny, 2*nz + 1, nxB], &
+                                  [2, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memory_type1, ierr)
+    call MPI_Type_commit(memory_type1, ierr)
   end subroutine setup_decomposition
 
   subroutine free_mpi()
@@ -87,6 +94,8 @@ contains
     deallocate (sendbuf, recvbuf)
     call MPI_Type_free(file_view_type, ierr)
     call MPI_Type_free(memory_type, ierr)
+    call MPI_Type_free(file_view_type1, ierr)
+    call MPI_Type_free(memory_type1, ierr)
   end subroutine free_mpi
 
   !------------------------------------------------------------------------

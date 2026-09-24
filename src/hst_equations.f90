@@ -214,8 +214,8 @@ contains
     integer(C_INT) :: ix, iy, iz
     complex(C_DOUBLE_COMPLEX) :: temp
 
-    call solve_component(KIND_D2V, lambda, 2)
-    call solve_component(KIND_ETA, lambda, 1)
+    call solve_component(KIND_D2V, lambda, V(:, :, :, 2))
+    call solve_component(KIND_ETA, lambda, V(:, :, :, 1))
     call fill_ghosts(2)
     call apply_dy(2, V(:, :, :, 3))            ! V(:, :, :, 3) = dv/dy
     !$omp target teams distribute parallel do collapse(3) default(none) &

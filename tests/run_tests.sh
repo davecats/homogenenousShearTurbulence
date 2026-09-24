@@ -16,6 +16,7 @@ run() {   # run <ranks> <exe> <deck>
 run "$np" test_roundtrip small.in
 run "$np" test_linsolve small.in
 run 1     test_kelvin kelvin.in
+run "$np" test_pressure pressure.in
 rm -rf "$work"
 [ $status -eq 0 ] && echo "ALL PASSED" || echo "SOME FAILED"
 exit $status
