@@ -1,7 +1,9 @@
 # hst -- DNS of homogeneous shear turbulence
 #
-#   make            CPU build: gfortran (mpifort) + FFTW
+#   make            CPU build: gfortran (mpifort) + FFTW     -> build-cpu/hst
 #   make GPU=1      GPU build: nvfortran (NVHPC mpif90) + cuFFT, OpenMP offload
+#                                                            -> build-gpu/hst
+#   make test       also build the test programs (tests/*.f90) into the build dir
 #   make clean
 #
 # Source `env/istm.sh` or `env/horeka.sh` first so the right compilers are on
@@ -10,11 +12,20 @@
 #   make GPU=1 GPU_ARCH=cc90
 # BUILD=<dir> keeps builds for different machines apart on a shared home:
 #   make GPU=1 GPU_ARCH=cc120 BUILD=build-corax
+# FFTW_DIR is where the CPU build finds include/fftw3.f03 and lib/libfftw3
+# (default /usr; the env scripts set it where needed).
 
 # Sources in dependency order (each file only uses the ones above it).
 SRC = src/hst_params.f90 \
       src/hst_input.f90 \
-      src/hst.f90
+      src/hst_mpi.f90 \
+      src/hst_fft.f90 \
+      src/hst_setup.f90 \
+      src/hst_transforms.f90 \
+      src/hst_initial.f90 \
+      src/hst_io.f90
+
+TESTS = tests/test_roundtrip.f90
 
 # The MPI wrapper is chosen here unless FC is given on the command line.
 # (make has a built-in default FC=f77, and compiler modules export FC=nvfortran
@@ -37,32 +48,50 @@ ifeq ($(GPU),1)
   MODFLAG   = -module $(BUILD)
   BUILD    ?= build-gpu
 else
-  FFLAGS   ?= -cpp -O2 -g -ffree-line-length-none -fbacktrace -DHAVE_FFTW
-  LIBS     ?= -lfftw3 -lm
+  FFTW_DIR ?= /usr
+  FFLAGS   ?= -cpp -O2 -g -ffree-line-length-none -fbacktrace -DHAVE_FFTW -I$(FFTW_DIR)/include
+  LIBS     ?= -L$(FFTW_DIR)/lib -lfftw3 -lm
   MODFLAG   = -J$(BUILD)
   BUILD    ?= build-cpu
 endif
 
-OBJ = $(patsubst src/%.f90,$(BUILD)/%.o,$(SRC))
-EXE = $(BUILD)/hst
+OBJ     = $(patsubst src/%.f90,$(BUILD)/%.o,$(SRC))
+EXE     = $(BUILD)/hst
+TESTEXE = $(patsubst tests/%.f90,$(BUILD)/%,$(TESTS))
 
 all: $(EXE)
 	@echo "built $(EXE)"
 
-$(EXE): $(OBJ)
-	$(FC) $(FFLAGS) -o $@ $(OBJ) $(LIBS)
+test: $(TESTEXE)
+	@echo "built $(TESTEXE)"
+
+$(EXE): $(OBJ) $(BUILD)/hst.o
+	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/hst.o $(LIBS)
+
+$(BUILD)/%: $(OBJ) $(BUILD)/%.o
+	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/$*.o $(LIBS)
 
 $(BUILD)/%.o: src/%.f90 | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
+
+$(BUILD)/%.o: tests/%.f90 | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
 # Module dependencies (so that `make -j` stays correct).
-$(BUILD)/hst_input.o: $(BUILD)/hst_params.o
-$(BUILD)/hst.o:       $(BUILD)/hst_params.o $(BUILD)/hst_input.o
+$(BUILD)/hst_input.o:      $(BUILD)/hst_params.o
+$(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o
+$(BUILD)/hst_fft.o:        $(BUILD)/hst_params.o
+$(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
+$(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o
+$(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
+$(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o
+$(BUILD)/hst.o:            $(OBJ)
+$(BUILD)/test_roundtrip.o: $(OBJ)
 
 clean:
 	rm -rf build-cpu build-gpu
 
-.PHONY: all clean
+.PHONY: all test clean

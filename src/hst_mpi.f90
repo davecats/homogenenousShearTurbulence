@@ -1,0 +1,250 @@
+! The x-z pencil decomposition and the transposes between its two layouts.
+!
+! In spectral space (z-pencil) a rank owns the x modes nx0:nxN and every z
+! mode; in physical space (x-pencil) it owns the z lines nz0:nzN and every x
+! point.  Moving between the two is one alltoall over all ranks.  Each rank
+! owns the whole of y (npy = 1); the ny0:nyN names are kept so that a y
+! decomposition can be added later.
+!
+! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery,
+! NCCL and HIP removed.  The pack/unpack kernels keep two rules from there:
+! the innermost loop is the index the *read* runs contiguously in, and
+! pack_zTOx/unpack_zTOx (likewise pack_xTOz/unpack_xTOz) spell the buffer
+! position p identically, because the alltoall permutes whole blocks.
+module hst_mpi
+
+  use, intrinsic :: iso_c_binding
+  use mpi_f08
+  use hst_params
+
+  implicit none
+  private
+
+  public :: setup_decomposition, free_mpi, transpose_zTOx, transpose_xTOz
+  public :: file_view_type, memory_type
+
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: sendbuf(:), recvbuf(:)
+  integer(C_INT), save :: sendcount
+  !$omp declare target(sendcount)
+  logical, save :: transpose_is_local
+  ! MPI-IO: how the field of this rank sits in the file and in memory.
+  type(MPI_Datatype), save :: file_view_type, memory_type
+  integer :: ierr
+
+contains
+
+  ! npxz = nproc ranks each own nxB = (nx+1)/nproc x modes in spectral space
+  ! and nzB = nzd/nproc z lines in physical space.  The alltoall needs both
+  ! splits to be even.
+  subroutine setup_decomposition()
+    integer :: ndims
+    integer(C_SIZE_T) :: n
+
+    npxz = nproc
+    ipxz = iproc
+    if (mod(nx + 1, npxz) /= 0 .or. mod(nzd, npxz) /= 0) then
+      if (has_terminal) then
+        print *, 'ERROR: nproc must divide both nx+1 and nzd.'
+        print *, '       nx+1 =', nx + 1, ' nzd =', nzd, ' nproc =', nproc
+      end if
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    nx0 = ipxz*(nx + 1)/npxz
+    nxN = (ipxz + 1)*(nx + 1)/npxz - 1
+    nxB = nxN - nx0 + 1
+    nz0 = ipxz*nzd/npxz
+    nzN = (ipxz + 1)*nzd/npxz - 1
+    nzB = nzN - nz0 + 1
+    ny0 = 0
+    nyN = ny - 1
+    has_average = (nx0 == 0)
+    !$omp target update to(nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN, ny, ni, S)
+    if (has_terminal) write (*, '(A,I5,A,I5,A,I5)') '   ranks =', nproc, '   nxB   =', nxB, '   nzB   =', nzB
+
+    transpose_is_local = (nzB == nzd)
+    sendcount = nxB*nzB*(nyN - ny0 + 5)
+    !$omp target update to(sendcount)
+    n = 1
+    if (.not. transpose_is_local) n = int(npxz, C_SIZE_T)*int(sendcount, C_SIZE_T)
+    allocate (sendbuf(n), recvbuf(n))
+    sendbuf = 0; recvbuf = 0
+    !$omp target enter data map(alloc: sendbuf, recvbuf)
+
+    ! The file holds rows 0..ny-1 (no ghost rows) of every mode and component:
+    ! a [ny, 2nz+1, nx+1, 3] complex array.  This rank writes its x slab from
+    ! V(-2:ny+1, -nz:nz, nx0:nxN, 1:3), skipping the ghost rows.
+    ndims = 4
+    call MPI_Type_create_subarray(ndims, [ny, 2*nz + 1, nx + 1, 3], [ny, 2*nz + 1, nxB, 3], &
+                                  [0, 0, nx0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, file_view_type, ierr)
+    call MPI_Type_commit(file_view_type, ierr)
+    call MPI_Type_create_subarray(ndims, [ny + 4, 2*nz + 1, nxB, 3], [ny, 2*nz + 1, nxB, 3], &
+                                  [2, 0, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memory_type, ierr)
+    call MPI_Type_commit(memory_type, ierr)
+  end subroutine setup_decomposition
+
+  subroutine free_mpi()
+    !$omp target exit data map(delete: sendbuf, recvbuf)
+    deallocate (sendbuf, recvbuf)
+    call MPI_Type_free(file_view_type, ierr)
+    call MPI_Type_free(memory_type, ierr)
+  end subroutine free_mpi
+
+  !------------------------------------------------------------------------
+  ! z-pencil Vz(iz, ix, iy)  <->  x-pencil Vx(ix, iz, iy)
+  !------------------------------------------------------------------------
+
+  subroutine repack_zTOx_local(Vz, Vx)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
+    integer(C_SIZE_T) :: iy, ix, iz
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vz, 3)
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(Vz, Vx, ny_batch, nxB, nzd) private(iy, ix, iz)
+    do iy = 1, ny_batch
+      do ix = 1, nxB
+        do iz = 1, nzd
+          Vx(ix, iz, iy) = Vz(iz, ix, iy)
+        end do
+      end do
+    end do
+  end subroutine repack_zTOx_local
+
+  subroutine repack_xTOz_local(Vx, Vz)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
+    integer(C_SIZE_T) :: iy, ix, iz
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vx, 3)
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(Vx, Vz, ny_batch, nxB, nzd) private(iy, ix, iz)
+    do iy = 1, ny_batch
+      do iz = 1, nzd
+        do ix = 1, nxB
+          Vz(iz, ix, iy) = Vx(ix, iz, iy)
+        end do
+      end do
+    end do
+  end subroutine repack_xTOz_local
+
+  subroutine pack_zTOx(Vz, send)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: send(:)
+    integer(C_SIZE_T) :: iy, ix, iz, dest, p
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vz, 3)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vz, send, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, dest, p)
+    do dest = 0, npxz - 1
+      do iy = 1, ny_batch
+        do ix = 1, nxB
+          do iz = 1, nzB
+            p = dest*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1)
+            send(p) = Vz(dest*nzB + iz, ix, iy)
+          end do
+        end do
+      end do
+    end do
+  end subroutine pack_zTOx
+
+  subroutine unpack_zTOx(recv, Vx)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
+    integer(C_SIZE_T) :: iy, ix, iz, src, p
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vx, 3)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vx, recv, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, src, p)
+    do src = 0, npxz - 1
+      do iy = 1, ny_batch
+        do ix = 1, nxB
+          do iz = 1, nzB
+            p = src*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1)
+            Vx(ix + src*nxB, iz, iy) = recv(p)
+          end do
+        end do
+      end do
+    end do
+  end subroutine unpack_zTOx
+
+  subroutine pack_xTOz(Vx, send)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: send(:)
+    integer(C_SIZE_T) :: iy, ix, iz, dest, p
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vx, 3)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vx, send, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, dest, p)
+    do dest = 0, npxz - 1
+      do iy = 1, ny_batch
+        do iz = 1, nzB
+          do ix = 1, nxB
+            p = dest*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1)
+            send(p) = Vx(dest*nxB + ix, iz, iy)
+          end do
+        end do
+      end do
+    end do
+  end subroutine pack_xTOz
+
+  subroutine unpack_xTOz(recv, Vz)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
+    integer(C_SIZE_T) :: iy, ix, iz, src, p
+    integer(C_INT) :: ny_batch
+    ny_batch = size(Vz, 3)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vz, recv, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, src, p)
+    do src = 0, npxz - 1
+      do iy = 1, ny_batch
+        do iz = 1, nzB
+          do ix = 1, nxB
+            p = src*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1)
+            Vz(iz + src*nzB, ix, iy) = recv(p)
+          end do
+        end do
+      end do
+    end do
+  end subroutine unpack_xTOz
+
+  ! The one collective of the solver.  On the GPU the buffers stay on the
+  ! device and a CUDA-aware MPI moves them (the use_device_addr block hands
+  ! MPI the device addresses).  This is the single place an NCCL transport
+  ! would go.
+  subroutine alltoall()
+#ifdef HAVE_CUDA
+    !$omp target data use_device_addr(sendbuf, recvbuf)
+#endif
+    call MPI_Alltoall(sendbuf, int(sendcount), MPI_DOUBLE_COMPLEX, &
+                      recvbuf, int(sendcount), MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, ierr)
+#ifdef HAVE_CUDA
+    !$omp end target data
+#endif
+    if (ierr /= MPI_SUCCESS) error stop 'MPI_Alltoall failed'
+  end subroutine alltoall
+
+  subroutine transpose_zTOx(Vz, Vx)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
+    if (transpose_is_local) then
+      call repack_zTOx_local(Vz, Vx)
+    else
+      call pack_zTOx(Vz, sendbuf)
+      call alltoall()
+      call unpack_zTOx(recvbuf, Vx)
+    end if
+  end subroutine transpose_zTOx
+
+  subroutine transpose_xTOz(Vx, Vz)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
+    if (transpose_is_local) then
+      call repack_xTOz_local(Vx, Vz)
+    else
+      call pack_xTOz(Vx, sendbuf)
+      call alltoall()
+      call unpack_xTOz(recvbuf, Vz)
+    end if
+  end subroutine transpose_xTOz
+
+end module hst_mpi

@@ -25,4 +25,5 @@ source $HST_ROOT/env/horeka.sh gpu
 echo "job $SLURM_JOB_ID on $(hostname), $SLURM_NTASKS ranks, deck: $(pwd)/hst.in"
 nvidia-smi -L
 
-mpirun -np $SLURM_NTASKS --bind-to none $HST_ROOT/build-gpu/hst hst.in
+HST_EXE=${HST_EXE:-$HST_ROOT/build-gpu/hst}     # e.g. sbatch --export=ALL,HST_EXE=~/hst/build-gpu/test_roundtrip
+mpirun -np $SLURM_NTASKS --bind-to none $HST_EXE hst.in

@@ -14,6 +14,11 @@ program hst
   use mpi_f08
   use hst_params
   use hst_input
+  use hst_mpi
+  use hst_fft
+  use hst_setup
+  use hst_transforms
+  use hst_io
 #ifdef HAVE_CUDA
   use omp_lib
 #endif
@@ -27,7 +32,6 @@ program hst
   call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
   call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
   has_terminal = (iproc == 0)
-
 #ifdef HAVE_CUDA
   call select_device()
 #endif
@@ -37,38 +41,19 @@ program hst
   call read_input(trim(deck))
   if (has_terminal) call print_input()
   call setup_decomposition()
+  call allocate_fields()
+  call init_fft()
+  call restart_read('Dati.cart.out')
+  !$omp target update to(V)
 
-  ! WP1 and later: allocate fields, FFT plans, initial field, time loop.
+  ! WP2 and later: derivatives, ghost rows, time loop, statistics.
 
+  call free_fft()
+  call free_fields()
+  call free_mpi()
   call MPI_Finalize(ierr)
 
 contains
-
-  ! 1-D x-z pencil decomposition: npxz = nproc ranks each own nxB = (nx+1)/nproc
-  ! x modes in spectral space and nzB = nzd/nproc z lines in physical space,
-  ! and the whole of y.  The alltoall transpose needs both splits to be even.
-  subroutine setup_decomposition()
-    npxz = nproc
-    ipxz = iproc
-    if (mod(nx + 1, npxz) /= 0 .or. mod(nzd, npxz) /= 0) then
-      if (has_terminal) then
-        print *, 'ERROR: nproc must divide both nx+1 and nzd.'
-        print *, '       nx+1 =', nx + 1, ' nzd =', nzd, ' nproc =', nproc
-      end if
-      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
-    end if
-    nx0 = ipxz*(nx + 1)/npxz
-    nxN = (ipxz + 1)*(nx + 1)/npxz - 1
-    nxB = nxN - nx0 + 1
-    nz0 = ipxz*nzd/npxz
-    nzN = (ipxz + 1)*nzd/npxz - 1
-    nzB = nzN - nz0 + 1
-    ny0 = 0
-    nyN = ny - 1
-    has_average = (nx0 == 0)
-    !$omp target update to(nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN, ny, ni, S)
-    if (has_terminal) write (*, '(A,I5,A,I5,A,I5)') '   ranks =', nproc, '   nxB   =', nxB, '   nzB   =', nzB
-  end subroutine setup_decomposition
 
 #ifdef HAVE_CUDA
   ! One GPU per rank: node-local rank modulo the number of devices.  The

@@ -15,6 +15,7 @@ case "${1:-gpu}" in
     ;;
   cpu)
     module load compiler/gnu/13 mpi/openmpi/5.0 numlib/fftw/3.3_serial
+    export FFTW_DIR=/software/all/numlib/fftw/3.3_serial_gnu_13
     ;;
   *)
     echo "usage: source env/horeka.sh [gpu|cpu]"
