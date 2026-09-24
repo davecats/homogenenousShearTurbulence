@@ -499,3 +499,24 @@ the second-order shift.
 **Energy budget of isotropic decay (S = 0).**  On the deliberately coarse
 16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
 the RK start-up transient, with eps from the compact derivatives.
+
+---
+
+## 9. Status (2026-09-25)
+
+| package | state |
+| --- | --- |
+| WP0 skeleton, build, environments | done; builds on istmio2, istmcetus, istmcorax, HoreKA |
+| WP1 transforms, transpose, restart I/O, initial field | done; round trip at round-off, 1-4 ranks, CPU and GPU |
+| WP2 HST numerics on CPU | done; solver, Kelvin and decay checks |
+| WP3 GPU | done; CPU = GPU to 1e-13, rank counts bit-identical, 4 x A100 on HoreKA |
+| WP3b pressure | done; Taylor-Green test |
+| WP4 HoreKA jobs and timings | done; 256^3 0.145 s/step and 512^3 0.99 s/step on 4 A100 (README) |
+| WP5 validation against hst-main and Sekimoto et al. | in progress |
+| WP6 y decomposition, NCCL | not started |
+
+Performance note: the small default deck (64x128x64) runs at 0.18 s/step
+on the RTX 3060, only 7x faster than 256^3, so small grids are launch- and
+latency-bound (many small kernels per substep, line batches of 16 x
+columns).  Worth a pass later: larger line batches, fewer launches in
+transform_to_physical, the per-line solver's memory traffic.
