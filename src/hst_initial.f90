@@ -10,7 +10,8 @@
 ! The random numbers are keyed on the mode indices (uniform_from_key, from
 ! channel/src/physics/initial_condition.f90), so the field is a pure
 ! function of the deck: the same at any rank count.  The ix = 0 plane is
-! made Hermitian so that the physical field is real.
+! made Hermitian so that the physical field is real.  The (0,0) mode (mean
+! profiles) is left zero, as in the CPL code: the mean flow is S*y alone.
 module hst_initial
 
   use, intrinsic :: iso_c_binding
@@ -37,6 +38,7 @@ contains
       kx = alfa0*ix
       do iz = -nz, nz
         kz = beta0*iz
+        if (ix == 0 .and. iz == 0) cycle      ! no mean profiles: the mean flow is S*y only
         do m = -mmax, mmax
           ky = 2.0d0*PI*m/ly
           k = sqrt(kx*kx + ky*ky + kz*kz)
