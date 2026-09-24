@@ -23,9 +23,13 @@ SRC = src/hst_params.f90 \
       src/hst_setup.f90 \
       src/hst_transforms.f90 \
       src/hst_initial.f90 \
-      src/hst_io.f90
+      src/hst_io.f90 \
+      src/hst_derivatives.f90 \
+      src/hst_linsolve.f90 \
+      src/hst_equations.f90 \
+      src/hst_stats.f90
 
-TESTS = tests/test_roundtrip.f90
+TESTS = tests/test_roundtrip.f90 tests/test_linsolve.f90 tests/test_kelvin.f90
 
 # The MPI wrapper is chosen here unless FC is given on the command line.
 # (make has a built-in default FC=f77, and compiler modules export FC=nvfortran
@@ -88,8 +92,14 @@ $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o
 $(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
 $(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o
+$(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o
+$(BUILD)/hst_linsolve.o:   $(BUILD)/hst_params.o
+$(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o
+$(BUILD)/hst_stats.o:      $(BUILD)/hst_params.o $(BUILD)/hst_linsolve.o
 $(BUILD)/hst.o:            $(OBJ)
 $(BUILD)/test_roundtrip.o: $(OBJ)
+$(BUILD)/test_linsolve.o:  $(OBJ)
+$(BUILD)/test_kelvin.o:    $(OBJ)
 
 clean:
 	rm -rf build-cpu build-gpu

@@ -8,6 +8,9 @@
 ! Derived from the `channel` code (D. Gatti) and the CPL HST code.
 ! Usage:  mpirun -np N ./hst [hst.in]
 !
+! Set-up, then per step: timestep() (hst_equations), statistics, snapshots,
+! restart file, new time step from the CFL number.
+!
 program hst
 
   use, intrinsic :: iso_c_binding
@@ -17,8 +20,12 @@ program hst
   use hst_mpi
   use hst_fft
   use hst_setup
+  use hst_derivatives
+  use hst_linsolve
   use hst_transforms
+  use hst_equations
   use hst_io
+  use hst_stats
 #ifdef HAVE_CUDA
   use omp_lib
 #endif
@@ -26,7 +33,9 @@ program hst
   implicit none
 
   character(len=256) :: deck
-  integer :: ierr
+  character(len=40) :: fname
+  integer :: ierr, m
+  real(C_DOUBLE) :: cfl_global, t0, t1, elapsed
 
   call MPI_Init(ierr)
   call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
@@ -36,6 +45,7 @@ program hst
   call select_device()
 #endif
 
+  !------------------------------------------------------------ set-up ----
   deck = 'hst.in'
   if (command_argument_count() >= 1) call get_command_argument(1, deck)
   call read_input(trim(deck))
@@ -43,17 +53,83 @@ program hst
   call setup_decomposition()
   call allocate_fields()
   call init_fft()
+  call init_linsolve()
+  call setup_derivatives()
   call restart_read('Dati.cart.out')
   !$omp target update to(V)
+  do m = 1, 3
+    call fill_ghosts(m)
+  end do
+  call open_runtimedata()
 
-  ! WP2 and later: derivatives, ghost rows, time loop, statistics.
+  ! First time step from the CFL of the initial field.
+  if (deltat == 0.0d0) deltat = 1.0d0
+  call transform_to_physical()
+  call compute_cfl()
+  call new_timestep()
+  ifield = floor((time + 0.5d0*deltat)/dt_field)
+  if (has_terminal) write (*, '(A)') '        time       deltat       cfl             q2            eps' // &
+    '             uv             uu             vv             ww'
+  call outstats()
 
+  !--------------------------------------------------------- time loop ----
+  elapsed = 0.0d0
+  do while (time < t_max - 0.5d0*deltat .and. istep < nstep)
+    t0 = MPI_Wtime()
+    istep = istep + 1
+    call timestep()
+
+    if (crossed(dt_stat)) call outstats()
+    if (crossed(dt_field)) then
+      ifield = ifield + 1
+      write (fname, '(A,I0,A)') 'Dati.cart.', ifield, '.out'
+      if (has_terminal) print '(A,F12.5)', '   writing '//trim(fname)//' at time', time
+      !$omp target update from(V)
+      call restart_write(trim(fname))
+    end if
+    if (crossed(dt_save)) then
+      if (has_terminal) print '(A,F12.5)', '   writing Dati.cart.out at time', time
+      !$omp target update from(V)
+      call restart_write('Dati.cart.out')
+    end if
+    call new_timestep()
+
+    t1 = MPI_Wtime()
+    elapsed = elapsed + (t1 - t0)
+    if (has_terminal .and. mod(istep, 50_C_SIZE_T) == 0) &
+      write (*, '(A,I0,A,F9.5,A,F12.2,A)') '   step ', istep, ': ', t1 - t0, ' s/step, ', elapsed, ' s elapsed'
+  end do
+
+  !------------------------------------------------------------ finish ----
+  if (has_terminal) print '(A,F12.5,A,I0,A)', '   end of run at time', time, ' after ', istep, ' steps; writing Dati.cart.out'
+  !$omp target update from(V)
+  call restart_write('Dati.cart.out')
+  call close_runtimedata()
+  call free_linsolve()
   call free_fft()
   call free_fields()
   call free_mpi()
   call MPI_Finalize(ierr)
 
 contains
+
+  ! .true. when the interval boundary of dt is crossed by this step.
+  logical function crossed(dt)
+    real(C_DOUBLE), intent(in) :: dt
+    crossed = .false.
+    if (dt > 0.0d0) crossed = floor((time + 0.5d0*deltat)/dt) > floor((time - 0.5d0*deltat)/dt)
+  end function crossed
+
+  ! Reduce the CFL number over ranks and choose the next time step: from
+  ! cflmax when the deck gives deltat = 0, else the fixed value (capped by
+  ! cflmax if that is set).
+  subroutine new_timestep()
+    call MPI_Allreduce(cfl, cfl_global, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+    cfl = cfl_global
+    if (cflmax > 0.0d0 .and. cfl > 0.0d0) deltat = cflmax/cfl
+    if (dt_fixed > 0.0d0) deltat = min(deltat, dt_fixed)
+    if (dt_fixed > 0.0d0 .and. cflmax <= 0.0d0) deltat = dt_fixed
+  end subroutine new_timestep
 
 #ifdef HAVE_CUDA
   ! One GPU per rank: node-local rank modulo the number of devices.  The

@@ -43,6 +43,7 @@ contains
 
     ! derived quantities
     ni = 1.0d0/re
+    dt_fixed = deltat
     lx = 2.0d0*PI/alfa0
     lz = 2.0d0*PI/beta0
     nxd = 3*(nx + 1)/2; do while (.not. fft_fit(nxd)); nxd = nxd + 1; end do

@@ -32,7 +32,7 @@ module hst_params
   !$omp declare target(ni, S)
 
   !------------------------------------------------------- clock and I/O ----
-  real(C_DOUBLE), save :: deltat, cflmax, cfl = 0.0d0
+  real(C_DOUBLE), save :: deltat, dt_fixed, cflmax, cfl = 0.0d0   ! dt_fixed: deck value, 0 = from cflmax
   real(C_DOUBLE), save :: t_max, dt_stat, dt_field, dt_save
   real(C_DOUBLE), save :: time, time0 = 0.0d0
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
@@ -53,6 +53,7 @@ module hst_params
 
   !--------------------------------------------------- derived grid data ----
   real(C_DOUBLE), allocatable, save :: y(:)             ! y(-2:ny+1)
+  real(C_DOUBLE), allocatable, save :: der(:, :, :)     ! der(0:ny-1, 0:3, -2:2), see hst_derivatives
   real(C_DOUBLE), allocatable, save :: k2(:, :)         ! alfa^2+beta^2 (iz, ix)
   complex(C_DOUBLE_COMPLEX), allocatable, save :: ialfa(:), ibeta(:)
   integer(C_INT), allocatable, save :: izd(:)           ! z mode -> padded index

@@ -473,3 +473,29 @@ that reversing it is an addition, not a rewrite.
 
 **WP6 (after WP5, on demand):** distributed cyclic y-Schur solve with
 `npy > 1`; then the NCCL alltoall backend if timings justify it.
+
+---
+
+## 8. Findings during implementation
+
+**Second-order error of the exact-advection step (WP2, Kelvin test).**
+With shear off, the Kelvin-mode test agrees with the closed form to 1e-9.
+With shear on, the error is 1.4e-3 at ny = 64 and 3.6e-4 at ny = 128 for a
+tilt of ky from pi to 1.05 -- second order in dy, independent of the time
+step and of viscosity.  The stencils themselves are sixth-order (modified
+wavenumber error 4e-7 at ny = 64).  The cause is the exact-advection step
+of 3.2: the unknowns are D0-weighted stencil sums, and multiplying such a
+sum by the node phase exp(-i kx S y(iy) dt) is not the stencil of the
+shifted field.  The difference is the variation of the D0 symbol,
+delta0(ky) ~ 1 - 0.172 (ky dy)^2, between the tilts, which predicts
+0.172 dy^2 (ky0^2 - ky(t)^2) = 1.47e-3 at ny = 64.  `S1data.cpl` shifts
+its D0-weighted right-hand sides in the same way, so this is a property
+of the reference method, kept deliberately.  A possible refinement, not
+done: apply the phase inside the stencils to the terms that are rebuilt
+from V each substep (the unknown, the viscous explicit half, the tilting
+term and the products), which leaves only the carried explicit term with
+the second-order shift.
+
+**Energy budget of isotropic decay (S = 0).**  On the deliberately coarse
+16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
+the RK start-up transient, with eps from the compact derivatives.
