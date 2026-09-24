@@ -189,7 +189,9 @@ contains
     real(C_DOUBLE), intent(in) :: dt_sub
     integer(C_INT) :: ix, iy, iz
     complex(C_DOUBLE_COMPLEX) :: f
-    !$omp target teams distribute parallel do collapse(3) default(none) &
+    ! (no default(none): nvfortran 25.9 rejects the grid array y in a
+    !  shared clause here, although it accepts it elsewhere)
+    !$omp target teams distribute parallel do collapse(3) &
     !$omp shared(V, oldrhs, y, alfa0, S, dt_sub, nx0, nxN, nz, ny) private(ix, iy, iz, f)
     do ix = nx0, nxN
       do iz = -nz, nz
