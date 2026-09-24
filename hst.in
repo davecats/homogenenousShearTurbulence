@@ -1,0 +1,34 @@
+! hst input deck.  Fortran namelist; a line starting with ! is a comment.
+! Box of Sekimoto, Dong & Jimenez (2016): Lx:Ly:Lz = 3:2:1, mean flow U = S*y.
+! Modes stored: 0..nx in x, -nz..nz in z; ny uniform points in y over ly.
+
+&mesh
+  nx = 63, ny = 128, nz = 63
+  alfa0 = 2.0943951023931953    ! 2*pi/lx, lx = 3
+  beta0 = 6.283185307179586     ! 2*pi/lz, lz = 1
+  ly = 2.0
+/
+
+&physics
+  re = 1000.0                   ! 1/nu
+  S = 1.0                       ! mean shear dU/dy
+  linear = .false.              ! .true. drops the nonlinear terms (tests)
+/
+
+&time_control
+  deltat = 0.0                  ! 0: choose from cflmax every step
+  cflmax = 1.0
+  t_max = 100.0
+  nstep = 1000000
+  dt_stat = 0.01                ! Runtimedata interval
+  dt_field = 10.0               ! Dati.cart.<i>.out snapshot interval
+  dt_save = 10.0                ! Dati.cart.out restart interval
+  time = 0.0                    ! start time when not restarting
+  time_from_restart = .false.
+/
+
+&init
+  amplitude = 1.0e-3            ! rms of the random initial field
+  seed = 1                      ! same seed, same field, on any rank count
+  kpeak = 4.0                   ! wavenumber of the initial spectrum peak
+/
