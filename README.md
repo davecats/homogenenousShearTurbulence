@@ -89,6 +89,12 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
   for why this is second order in dy).
 - `test_pressure`: Taylor-Green vortex against its exact pressure
   (1.9e-5 at ny = 64).
+- `test_taylorgreen`: Taylor-Green vortices in two orientations decay
+  exactly with the nonlinear terms on (7e-6 after 20 steps).
+- `test_forcing`: the nonlinear forcing of `eta` against its closed form
+  for `u = sin(ky)`, `w = sin(kx)`.
+- `test_conservation`: energy input of each nonlinear product on a random
+  field (`uu`, `vv`, `ww` vanish, the cross terms cancel).
 
 The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
 runs with different rank counts are bit-identical on the GPU.

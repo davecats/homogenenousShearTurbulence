@@ -520,3 +520,18 @@ on the RTX 3060, only 7x faster than 256^3, so small grids are launch- and
 latency-bound (many small kernels per substep, line batches of 16 x
 columns).  Worth a pass later: larger line batches, fewer launches in
 transform_to_physical, the per-line solver's memory traffic.
+
+**Energy conservation of the nonlinear terms (WP5).**  `test_conservation`
+takes one inviscid step from the random field with one product at a time:
+uu, vv, ww alone change the energy by < 2e-5 per unit time relative, the
+three cross products by 0.12, 0.14, 0.27 with sum 5e-3, and all six
+together by 2e-5.  A viscous run at S = 0 from the same field satisfies
+d(q2)/dt = -2 eps to 1e-4 at every step when q2 includes the (0,0) mode.
+The first version of the initial field contained random mean profiles
+(the (0,0) mode, 7% of the energy); their exchange with the fluctuations
+made the fluctuation budget look 45% off and made the side-by-side start
+differ from hst-main, which zeroes that mode at start-up.  The mode is now
+left zero.  The nonlinear forcing of eta is checked separately against
+its closed form (`test_forcing`, 3e-4 = O(dt)), and Taylor-Green vortices
+in two orientations decay exactly with the nonlinear terms on
+(`test_taylorgreen`, 7e-6).
