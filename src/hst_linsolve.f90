@@ -20,7 +20,9 @@
 !
 ! The rows are generated on the fly inside the sweep, so the matrix is
 ! never stored: the forward sweep keeps the two previous rows in registers
-! and writes only the three upper diagonals U (for the back substitution)
+! and writes only the three upper diagonals U (for the back substitution;
+! U(:, :, 0) holds the reciprocal of the pivot, so the sweeps multiply
+! where they would divide: one complex division per row instead of five)
 ! and the substituted right-hand sides X, Y1, Y2.  Storage is interleaved,
 ! line index first (U(iline, iy, j)), so that the threads of a kernel read
 ! consecutive addresses.  Lines are processed in batches of line_chunk x
@@ -179,9 +181,9 @@ contains
     complex(C_DOUBLE_COMPLEX), intent(inout) :: U(ld, 0:n - 1, 0:2), X(ld, 0:n - 1)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: Y1(ld, 0:n - 1), Y2(ld, 0:n - 1)
     integer(C_INT) :: i, j, m
-    complex(C_DOUBLE_COMPLEX) :: a(-2:2), wrap, l1, l2, bx, b1, b2          ! row i: substituted right-hand sides
-    complex(C_DOUBLE_COMPLEX) :: p1, u11, u12, bx1, b11, b21      ! row i-1: pivot, upper entries, substituted rhs
-    complex(C_DOUBLE_COMPLEX) :: p2, u21, u22, bx2, b12, b22      ! row i-2
+    complex(C_DOUBLE_COMPLEX) :: a(-2:2), wrap, l1, l2, bx, b1, b2, rp     ! row i: substituted right-hand sides, 1/pivot
+    complex(C_DOUBLE_COMPLEX) :: rp1, u11, u12, bx1, b11, b21     ! row i-1: 1/pivot, upper entries, substituted rhs
+    complex(C_DOUBLE_COMPLEX) :: rp2, u21, u22, bx2, b12, b22     ! row i-2
     complex(C_DOUBLE_COMPLEX) :: c1m4, c1m3, c10, c2m3, c20, c21, d11, d12, d21, d22
     complex(C_DOUBLE_COMPLEX) :: s1, s2, m11, m12, m21, m22, det, xb1, xb2
     complex(C_DOUBLE_COMPLEX) :: xk1, xk2, yk1, yk2, zk1, zk2
@@ -190,8 +192,8 @@ contains
     ! Forward sweep over the interior rows: generate row i, move its border
     ! columns (n-2 -> Y1, n-1 -> Y2) out of P, eliminate with rows i-2 and
     ! i-1, store the upper part and the substituted right-hand sides.
-    p1 = 1.0d0; u11 = 0.0d0; u12 = 0.0d0; bx1 = 0.0d0; b11 = 0.0d0; b21 = 0.0d0
-    p2 = 1.0d0; u21 = 0.0d0; u22 = 0.0d0; bx2 = 0.0d0; b12 = 0.0d0; b22 = 0.0d0
+    rp1 = 1.0d0; u11 = 0.0d0; u12 = 0.0d0; bx1 = 0.0d0; b11 = 0.0d0; b21 = 0.0d0
+    rp2 = 1.0d0; u21 = 0.0d0; u22 = 0.0d0; bx2 = 0.0d0; b12 = 0.0d0; b22 = 0.0d0
     do i = 0, m - 1
       do j = -2, 2
         wrap = 1.0d0
@@ -214,21 +216,22 @@ contains
       end if
       bx = X(il, i)
       if (i >= 2) then
-        l2 = a(-2)/p2
+        l2 = a(-2)*rp2
         a(-1) = a(-1) - l2*u21
         a(0) = a(0) - l2*u22
         bx = bx - l2*bx2; b1 = b1 - l2*b12; b2 = b2 - l2*b22
       end if
       if (i >= 1) then
-        l1 = a(-1)/p1
+        l1 = a(-1)*rp1
         a(0) = a(0) - l1*u11
         a(1) = a(1) - l1*u12
         bx = bx - l1*bx1; b1 = b1 - l1*b11; b2 = b2 - l1*b21
       end if
-      U(il, i, 0) = a(0); U(il, i, 1) = a(1); U(il, i, 2) = a(2)
+      rp = 1.0d0/a(0)
+      U(il, i, 0) = rp; U(il, i, 1) = a(1); U(il, i, 2) = a(2)
       X(il, i) = bx; Y1(il, i) = b1; Y2(il, i) = b2
-      p2 = p1; u21 = u11; u22 = u12; bx2 = bx1; b12 = b11; b22 = b21
-      p1 = a(0); u11 = a(1); u12 = a(2); bx1 = bx; b11 = b1; b21 = b2
+      rp2 = rp1; u21 = u11; u22 = u12; bx2 = bx1; b12 = b11; b22 = b21
+      rp1 = rp; u11 = a(1); u12 = a(2); bx1 = bx; b11 = b1; b21 = b2
     end do
     ! Border rows: their interior couplings (C) and their 2x2 block (D).
     c1m4 = coef(kind, lambda, ni, kk, n, der, n - 2, -2)
@@ -242,17 +245,17 @@ contains
     d21 = coef(kind, lambda, ni, kk, n, der, n - 1, -1)
     d22 = coef(kind, lambda, ni, kk, n, der, n - 1, 0)
     ! Backward sweep for the three right-hand sides.
-    xk1 = X(il, m - 1)/U(il, m - 1, 0); yk1 = Y1(il, m - 1)/U(il, m - 1, 0); zk1 = Y2(il, m - 1)/U(il, m - 1, 0)
+    xk1 = X(il, m - 1)*U(il, m - 1, 0); yk1 = Y1(il, m - 1)*U(il, m - 1, 0); zk1 = Y2(il, m - 1)*U(il, m - 1, 0)
     X(il, m - 1) = xk1; Y1(il, m - 1) = yk1; Y2(il, m - 1) = zk1
     xk2 = xk1; yk2 = yk1; zk2 = zk1
-    xk1 = (X(il, m - 2) - U(il, m - 2, 1)*xk1)/U(il, m - 2, 0)
-    yk1 = (Y1(il, m - 2) - U(il, m - 2, 1)*yk1)/U(il, m - 2, 0)
-    zk1 = (Y2(il, m - 2) - U(il, m - 2, 1)*zk1)/U(il, m - 2, 0)
+    xk1 = (X(il, m - 2) - U(il, m - 2, 1)*xk1)*U(il, m - 2, 0)
+    yk1 = (Y1(il, m - 2) - U(il, m - 2, 1)*yk1)*U(il, m - 2, 0)
+    zk1 = (Y2(il, m - 2) - U(il, m - 2, 1)*zk1)*U(il, m - 2, 0)
     X(il, m - 2) = xk1; Y1(il, m - 2) = yk1; Y2(il, m - 2) = zk1
     do i = m - 3, 0, -1
-      bx = (X(il, i) - U(il, i, 1)*xk1 - U(il, i, 2)*xk2)/U(il, i, 0)
-      b1 = (Y1(il, i) - U(il, i, 1)*yk1 - U(il, i, 2)*yk2)/U(il, i, 0)
-      b2 = (Y2(il, i) - U(il, i, 1)*zk1 - U(il, i, 2)*zk2)/U(il, i, 0)
+      bx = (X(il, i) - U(il, i, 1)*xk1 - U(il, i, 2)*xk2)*U(il, i, 0)
+      b1 = (Y1(il, i) - U(il, i, 1)*yk1 - U(il, i, 2)*yk2)*U(il, i, 0)
+      b2 = (Y2(il, i) - U(il, i, 1)*zk1 - U(il, i, 2)*zk2)*U(il, i, 0)
       X(il, i) = bx; Y1(il, i) = b1; Y2(il, i) = b2
       xk2 = xk1; yk2 = yk1; zk2 = zk1
       xk1 = bx; yk1 = b1; zk1 = b2

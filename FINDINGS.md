@@ -298,3 +298,64 @@ longer fit next to the fields (out of memory at 27 GB of fields and
 buffers), so the four plans now share one work area
 (`cufftSetAutoAllocation` off); the line-solver workspace with all
 columns is 6.1 GB there (`line_chunk` bounds it).
+
+---
+
+
+## Multi-GPU pass (2026-09-25, session 3)
+
+The handoff said four A100 were 85-90% transposes, inferred from the
+phases the timer had then.  The first step was to make the timer say so
+itself: pack/unpack and the alltoall are now phases of their own, charged
+from inside `hst_mpi` (the transform and product phases keep the FFTs and
+kernels around them).  Two things came out of that.
+
+**The MPI alltoall was the step.**  On four A100 (`jobs/horeka_profile.slurm`,
+`NP=4`, seconds per full step):
+
+| deck | step | alltoall | share |
+| --- | --- | --- | --- |
+| bench_256 | 0.101 | 0.061 | 60 % |
+| bench_512 | 0.750 | 0.534 | 68 % |
+
+At 512^3 each GPU sends 0.92 GB per transpose to the other three, nine
+times per step: 8.2 GB/step in each direction at 0.534 s is 15 GB/s per
+GPU, a twentieth of what the NVLink of the node carries.  HPC-X's
+MPI_Alltoall on device buffers is not using it well.
+
+**NCCL transport** (`make GPU=1 NCCL=1`, deck `transport`, default
+`auto`).  Not the channel code's C bridge: `hst_mpi.f90` declares the six
+NCCL C prototypes it needs (90 lines) and issues one `ncclSend` and one
+`ncclRecv` per peer inside a group (NCCL 2.25/2.27 on the two machines has
+no alltoall), on the OpenMP target stream from `hst_fft::target_stream`,
+so the unpack kernel queues behind the transfer and the host never waits
+for it.  NVHPC's own Fortran `nccl` module was tried first and rejected:
+its interfaces want CUDA Fortran `device` arrays, which OpenMP-mapped
+arrays are not.  The NCCL communicator is created in `setup_decomposition`
+from a unique id broadcast over MPI; `auto` falls back to MPI when ranks
+share a GPU (two ranks on the RTX 3060), which NCCL refuses.  Validation:
+the 12 tests with two ranks on the two RTX A6000 of istmcetus and the
+regression against the references at 1e-13; the 4-GPU test job on HoreKA.
+
+Same job, same day, the two transports back to back:
+
+| deck | alltoall MPI | alltoall NCCL | step MPI | step NCCL | 1 A100 |
+| --- | --- | --- | --- | --- | --- |
+| bench_256 | 0.061 | 0.0096 | 0.101 | 0.048 | 0.115 |
+| bench_512 | 0.534 | 0.060 | 0.750 | 0.298 | 0.970 |
+
+The alltoall is 6-9x faster (137 GB/s per GPU per direction at 512^3),
+the step 2.1-2.5x, and four A100 are now 3.3x one at 512^3 (81% parallel
+efficiency; the original channel code reached 51% there) and 2.4x at
+256^3.
+
+**A timer artefact, found with nsys.**  The first split charged 17% to
+"pack, unpack" on the A100 and 38% on the RTX 3060, but the nsys kernel
+summary of the same run showed the pack/unpack kernels at 5% of the
+kernel time and near bandwidth (250-380 us for 39 MB each on the RTX
+3060).  The z transform before each transpose is a cuFFT call that
+returns at once, and the pack's toc was the next synchronisation point,
+so the transform's time landed in the pack.  `hst_transforms` now marks
+its phase before each transpose.  The alltoall line was never affected
+(the pack kernel is synchronous, so the transfer starts on a quiet
+device).  Corrected split below.
