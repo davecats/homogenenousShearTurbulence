@@ -50,7 +50,7 @@ contains
     integer(C_INT) :: ix, iy, iz, c
     real(C_DOUBLE) :: w, eps, uv, uu, vv, ww, vw, uw, grad, mfx, mfz
     real(C_DOUBLE) :: q_in, q_out, e_in, e_out, g_in, g_out, l_in, l_out
-    real(C_DOUBLE) :: sums(13), glob(13)      ! (not s/S: Fortran is case-insensitive and S is the shear)
+    real(C_DOUBLE) :: sums(13), q2
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, dq
     integer :: ierr
 
@@ -113,22 +113,24 @@ contains
       end do
       eps = eps + grad; e_in = e_in + g_in; e_out = e_out + g_out
     end do
-    sums = [uu + vv + ww, eps, uv, vw, uu, vv, ww, uw, mfz, q_in, q_out, e_in, e_out]
-    glob = 0
-    call MPI_Allreduce(sums, glob, 13, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-    call MPI_Allreduce(MPI_IN_PLACE, mfx, 1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    ! over the ranks, then back into the named quantities
+    sums = [eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out]
+    call MPI_Allreduce(MPI_IN_PLACE, sums, 13, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    eps = sums(1); uv = sums(2); uu = sums(3); vv = sums(4); ww = sums(5); vw = sums(6); uw = sums(7)
+    mfx = sums(8); mfz = sums(9); q_in = sums(10); q_out = sums(11); e_in = sums(12); e_out = sums(13)
+    q2 = uu + vv + ww
     if (has_terminal) then
       ! energy = ly/2 <q2>, diss = ly/2 <grad u : grad u>, stresses ly/2 <..>, variances ly <..>
       write (*, '(F12.5,2X,ES11.4,2X,F8.4,4(2X,ES13.6))') time, deltat, cfl*deltat, &
-        0.5d0*glob(1), 0.5d0*glob(2), 0.5d0*glob(3), 0.5d0*glob(4)
-      write (unit_rt, '(13(ES23.15,1X))') time, mfx, glob(9), S, s2_of(time), S*time, gamma_y_of(time), deltat, cfl*deltat, &
-        0.5d0*glob(1), 0.5d0*glob(2), 0.5d0*glob(3), 0.5d0*glob(4)
-      write (unit_var, '(5(ES23.15,1X))') time, glob(5), glob(7), glob(6), glob(8)
+        0.5d0*q2, 0.5d0*eps, 0.5d0*uv, 0.5d0*vw
+      write (unit_rt, '(13(ES23.15,1X))') time, mfx, mfz, S, s2_of(time), S*time, gamma_y_of(time), deltat, cfl*deltat, &
+        0.5d0*q2, 0.5d0*eps, 0.5d0*uv, 0.5d0*vw
+      write (unit_var, '(5(ES23.15,1X))') time, uu, ww, vv, uw
       flush (unit_rt); flush (unit_var)
       if (stokes_active()) then
         ! region averages: q2 and grad u : grad u inside and outside |y - ly/2| < 8 delta (io.cpl)
         l_in = sum(dyl, mask=(inlayer == 1)); l_out = sum(dyl, mask=(inlayer == 0))
-        write (unit_sl, '(5(ES23.15,1X))') time, glob(11)/l_out, glob(10)/l_in, glob(13)/l_out, glob(12)/l_in
+        write (unit_sl, '(5(ES23.15,1X))') time, q_out/l_out, q_in/l_in, e_out/l_out, e_in/l_in
         flush (unit_sl)
       end if
     end if
