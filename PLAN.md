@@ -512,7 +512,7 @@ the RK start-up transient, with eps from the compact derivatives.
 | WP3 GPU | done; CPU = GPU to 1e-13, rank counts bit-identical, 4 x A100 on HoreKA |
 | WP3b pressure | done; Taylor-Green test |
 | WP4 HoreKA jobs and timings | done; 256^3 0.145 s/step and 512^3 0.99 s/step on 4 A100 (README) |
-| WP5 validation against hst-main and Sekimoto et al. | side-by-side done (section 8); long-run statistics in progress |
+| WP5 validation against hst-main and Sekimoto et al. | done (section 8) |
 | WP6 y decomposition, NCCL | not started |
 
 Performance note: the small default deck (64x128x64) runs at 0.18 s/step
@@ -553,3 +553,22 @@ The remaining difference is at the level of the two codes' dealiasing
 sizes and the CPL centred-difference dissipation; the CPL run needed
 about 11 s/step on 4 CPU ranks against 0.66 s/step here on a shared
 RTX 3060.
+
+**Long sheared run (WP5).**  The default deck (box 3:2:1, 64x128x64 modes,
+Re = 1000, S = 1, cflmax = 0.8) run to S t = 100 on the RTX 3060 (57324
+steps, 0.18 s/step).  Averages over S t = 30..100 (701 samples):
+
+| quantity | hst | literature |
+| --- | --- | --- |
+| production / dissipation, -S uv / eps | 1.006 | 1 in a statistically stationary box |
+| S* = S q2 / eps | 6.3 | 5..7 (Rogers & Moin 1987; Sekimoto, Dong & Jimenez 2016) |
+| -uv / q2 | 0.159 | 0.15 (Tavoularis & Karnik 1989) |
+| b_uu, b_vv, b_ww | +0.10, -0.04, -0.06 | +0.2, -0.14, -0.06 at Re_lambda ~ 150..250 |
+| Re_lambda | 33 | |
+
+The anisotropy is weaker than the laboratory values, as expected at
+Re_lambda = 33 in a small box.  Resolution of the default deck at these
+statistics: dx/eta = 2.0, dy/eta = 1.0, dz/eta = 0.3, i.e. x is the coarse
+direction; for a production run in this box choose nx about 3 nz (e.g.
+nx = 191, nz = 63, ny = 128).  Snapshots and pressure files were written
+every 20 time units.

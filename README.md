@@ -97,7 +97,10 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
   field (`uu`, `vv`, `ww` vanish, the cross terms cancel).
 
 The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
-runs with different rank counts are bit-identical on the GPU.
+runs with different rank counts are bit-identical on the GPU.  Against the
+CPL code `hst-main` from an identical start the box energy agrees to 5e-5
+over 150 steps, and a run to S t = 100 gives S* = 6.3, -uv/q2 = 0.16 and
+production = dissipation (PLAN.md, section 8).
 
 ## Performance
 

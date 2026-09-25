@@ -1,6 +1,8 @@
 ! hst input deck.  Fortran namelist; a line starting with ! is a comment.
 ! Box of Sekimoto, Dong & Jimenez (2016): Lx:Ly:Lz = 3:2:1, mean flow U = S*y.
 ! Modes stored: 0..nx in x, -nz..nz in z; ny uniform points in y over ly.
+! At Re = 1000 this grid gives dx/eta = 2, dy/eta = 1, dz/eta = 0.3 in the
+! stationary state; for a production run take nx = 191, nz = 63, ny = 128.
 
 &mesh
   nx = 63, ny = 128, nz = 63
