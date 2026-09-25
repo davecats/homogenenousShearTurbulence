@@ -30,6 +30,7 @@ module hst_fft
 #ifdef HAVE_CUDA
   use cudafor
   use cufft
+  use omp_lib, only: omp_get_default_device
 #endif
 
   implicit none
@@ -49,6 +50,16 @@ module hst_fft
 #endif
 #ifdef HAVE_CUDA
   integer, save :: cu_pFFT, cu_pIFT, cu_pRFT, cu_pHFT
+  ! The CUDA stream the OpenMP target regions run on (NVHPC extension).
+  ! The cuFFT plans are put on it, so transforms and kernels are ordered
+  ! by the stream and no host synchronisation is needed between them.
+  interface
+    function ompx_get_cuda_stream(device, nowait) bind(c, name='ompx_get_cuda_stream') result(stream)
+      import :: C_PTR, C_INT
+      integer(C_INT), value :: device, nowait
+      type(C_PTR) :: stream
+    end function ompx_get_cuda_stream
+  end interface
 #endif
 
 contains
@@ -60,6 +71,7 @@ contains
 #endif
 #ifdef HAVE_CUDA
     integer, dimension(1) :: n, inembed, onembed
+    integer(kind=cuda_stream_kind) :: stream
 #endif
     fft_y0 = ny0 - 2
     fft_yN = nyN + 2
@@ -94,6 +106,11 @@ contains
     call check(istat, 'cufftPlanMany RFT')
     istat = cufftPlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny*3)
     call check(istat, 'cufftPlanMany HFT')
+    stream = transfer(ompx_get_cuda_stream(int(omp_get_default_device(), C_INT), 0_C_INT), stream)
+    istat = cufftSetStream(cu_pFFT, stream); call check(istat, 'cufftSetStream FFT')
+    istat = cufftSetStream(cu_pIFT, stream); call check(istat, 'cufftSetStream IFT')
+    istat = cufftSetStream(cu_pRFT, stream); call check(istat, 'cufftSetStream RFT')
+    istat = cufftSetStream(cu_pHFT, stream); call check(istat, 'cufftSetStream HFT')
 #endif
   end subroutine init_fft
 
@@ -138,10 +155,8 @@ contains
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdz)
-    istat = cudaDeviceSynchronize()
     istat = cufftExecZ2Z(cu_pFFT, VVdz, VVdz, CUFFT_FORWARD)
     call check(istat, 'cufftExecZ2Z FFT')
-    istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine FFT
@@ -153,10 +168,8 @@ contains
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdz)
-    istat = cudaDeviceSynchronize()
     istat = cufftExecZ2Z(cu_pIFT, VVdz, VVdz, CUFFT_INVERSE)
     call check(istat, 'cufftExecZ2Z IFT')
-    istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine IFT
@@ -170,10 +183,8 @@ contains
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdx)
-    istat = cudaDeviceSynchronize()
     istat = cufftExecZ2D(cu_pRFT, VVdx, VVdx)
     call check(istat, 'cufftExecZ2D RFT')
-    istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine RFT
@@ -185,10 +196,8 @@ contains
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdp)
-    istat = cudaDeviceSynchronize()
     istat = cufftExecD2Z(cu_pHFT, VVdp, VVdp)
     call check(istat, 'cufftExecD2Z HFT')
-    istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine HFT
