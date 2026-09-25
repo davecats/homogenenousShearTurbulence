@@ -13,10 +13,10 @@
 ! synchronisation is needed around it (deck parameter transport).
 !
 ! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery
-! and HIP removed.  The pack/unpack kernels keep two rules from there:
-! the innermost loop is the index the *read* runs contiguously in, and
-! pack_zTOx/unpack_zTOx (likewise pack_xTOz/unpack_xTOz) spell the buffer
-! position p identically, because the alltoall permutes whole blocks.
+! and HIP removed.  The pack kernels are block copies (the alltoall
+! permutes whole blocks, so the leading index stays leading); the change of
+! leading index happens on the receive side, in one tiled transpose kernel
+! that also converts the two layouts directly on a single rank.
 module hst_mpi
 
   use, intrinsic :: iso_c_binding

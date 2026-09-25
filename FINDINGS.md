@@ -421,3 +421,145 @@ The single-GPU gain is the solver's reciprocal pivots; the 4-GPU gain is
 NCCL.  What is left on four GPUs is spread over the products and their
 transforms, the pack/unpack kernels, the alltoall and the solver, none of
 them above a third of the step (NEXT_SESSION.md).
+
+---
+
+
+## The kernels around the transposes (2026-09-25, session 4)
+
+The handoff named six pack/unpack/repack kernels as index-swapping loops
+at half the bandwidth.  Reading them, only four are: the two `pack`
+kernels copy whole blocks with the leading index kept (the alltoall
+permutes blocks), and nsys on the RTX 3060 confirms it, 2.1 ms per call
+for 0.61 GB moved, 81% of the card's bandwidth.  The change of leading
+index happens in the two `unpack` kernels (4.7 ms for the same bytes,
+36%) and, on one rank, in the two local repacks (6.0 ms for 1.23 GB,
+57%; 40% on the A100).
+
+**One tiled transpose kernel.**  The four became one routine,
+`transpose_tiled`: `B(jb*(block-1) + j, i, plane) = A(i, j, plane, block)`
+for every plane (a y row of one field) and block (a source rank), called
+from the two transpose drivers with the layout of each use, and the
+receive buffer viewed as `(nzB, nxB, ny+4, 3, npxz)`.  On the GPU a
+thread block moves a 32x32 tile through shared memory (padded by one
+against bank conflicts), reading `A` along `i` and writing `B` along
+`j`, so both sides are coalesced.
+
+**It had to be CUDA Fortran.**  Four OpenMP forms of the same tile were
+built and timed on the RTX 3060 (bench_256, one rank, the local repack,
+plain loop 6.0 ms per call):
+
+| form | tile in | per call |
+| --- | --- | --- |
+| `teams distribute` + `parallel do` inside, 128 threads | shared memory (26 KB, the compiler says so) | 10.0 ms |
+| the same with `thread_limit(256)` | shared memory | 16.4 ms |
+| `teams loop` + `loop bind(parallel)` | global memory (0 bytes shared in the launch) | 7.6 ms |
+| 4x4 blocks per thread, no tile | registers (compiler fused the loops away) | 13.4 ms |
+| CUDA Fortran kernel, `shared` tile, 32x8 threads | shared memory (16.9 KB static) | **3.8 ms** |
+
+The `teams distribute` form puts the team-private array in shared memory
+but generates the inner `parallel do` loops badly (109 registers per
+thread, no parallelisation report for them); the `loop` form generates
+good loops but leaves the tile in global memory; the OpenMP 5 `allocate`
+directive with `omp_pteam_mem_alloc`, which would fix that, is
+"unrecognized" by nvfortran 25.9, as a clause and as a directive.  The
+CUDA Fortran kernel (40 lines, `attributes(global)`, launched on the
+OpenMP target stream from device pointers obtained through
+`use_device_addr`) is the one kernel of the code that is not OpenMP; the
+CPU path is the plain loop.  DESIGN.md 7 already confined CUDA Fortran to
+`hst_mpi.f90` and `hst_fft.f90`.  Two pitfalls: Fortran is
+case-insensitive, so a tile array named `tile` next to the parameter
+`TILE` is one symbol ("vector expression used where scalar expression
+required"); and an explicit-shape dummy inside a target region is mapped
+implicitly, which works because the actual is already on the device.
+
+RTX 3060, bench_256, per call: local repack 6.0 -> 3.8 ms (323 GB/s, 90%
+of the card), unpack (two ranks) 4.7 -> 2.1 ms, the same as the pack
+copy.  Regression bit-identical to the references (5e-14, the CPU/GPU
+difference), 12 tests on CPU, GPU and the NCCL build.
+
+**`build_products` in one pass** (handoff item 3).  The product index was
+the outer collapsed loop, so each velocity field was streamed from memory
+twice per call (six reads for three products; the RTX 3060 was at 355
+GB/s, i.e. the reads were not served by L2).  A thread now reads u, v, w
+once and writes its three products, which also reads better than the
+`merge` index arithmetic it replaces.  Same operations in the same order,
+bit-identical; 7.8 -> 5.7 ms per call on the RTX 3060.
+
+**`buildrhs_prepare` and `buildrhs`, evaluated and left alone.**  On one
+A100 at 256^3 they take 1.5 and 2 x 2.4 ms per substep, both at about
+half the bandwidth (1.2 GB and 1.9 GB of sectors moved; the `VVdz`
+stencil reads are a plane apart between neighbouring threads, so half of
+every 32-byte sector is wasted, and the other loop order was tried last
+session and lost).  Fusing `prepare` into the first `buildrhs` saves one
+read and write of `rhs` and `oldrhs` (1.07 GB, about 0.7 ms) per substep,
+2% of the step, and merging the two `buildrhs` calls would save the same
+at the price of six products in memory at once; neither is worth the
+loss of the "V-only part, then the products" structure.
+
+**A100 numbers** (`jobs/horeka_ab.slurm`, new in this session: the same
+benchmarks on `~/hst` and `~/hst-exp` back to back on one node).
+
+Job 5163733, `~/hst` at the previous commit against `~/hst-exp` with the
+tiled transpose, seconds per full step from the timer (phase "transpose
+pack, unpack" and the total; on four GPUs with NCCL):
+
+| deck, GPUs | pack/unpack before | after | step before | after |
+| --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0166 | 0.0085 | 0.1133 | 0.1052 |
+| bench_256, 4 | 0.0075 | 0.0049 | 0.0454 | 0.0429 |
+| bench_512, 1 | 0.1456 | 0.0655 | 0.9567 | 0.8766 |
+| bench_512, 4 | 0.0549 | 0.0351 | 0.3056 | 0.3040 |
+
+The nsys summary on one A100 (bench_256) has the local repack at 1.86
+and 1.94 ms per call before and the tile kernel at 0.92 ms after (1.2 GB
+moved: 1.3 TB/s, 85% of the A100's bandwidth); the kernel time of five
+steps 0.596 -> 0.566 s.  One GPU gains 7-8%, four GPUs 5% at 256^3.  At
+512^3 on four GPUs the pack/unpack phase lost 0.020 s but the alltoall
+phase gained 0.018 s in this sample (0.0547 -> 0.0732; the previous
+session measured 0.060), so the step barely moved.  The second job below repeated the tiled
+build and found its alltoall at 0.0512 and its step at 0.2825, so that
+sample was NCCL noise (the alltoall of the same build varies by 30%
+between runs; the pack/unpack phase is reproducible to 1%).
+
+Job 5163750, `~/hst-exp` (tiled) against `~/hst-exp2` (tiled and the
+one-pass `build_products`), same layout:
+
+| deck, GPUs | products phase before | after | step before | after |
+| --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0466 | 0.0390 | 0.1060 | 0.0981 |
+| bench_256, 4 | 0.0126 | 0.0102 | 0.0436 | 0.0409 |
+| bench_512, 1 | 0.3766 | 0.3202 | 0.8769 | 0.8201 |
+| bench_512, 4 | 0.0936 | 0.0805 | 0.2825 | 0.2683 |
+
+`build_products` 2.71 -> 1.35 ms per call on the A100 (nsys, bench_256),
+i.e. the second read of each field was not served by L2 there either;
+the kernel now moves 0.92 GB read + 0.92 GB written in 1.35 ms, 1.36
+TB/s, 88% of the bandwidth.  Together the two changes take one A100 from
+0.113 to 0.098 s/step at 256^3 (13%) and from 0.957 to 0.820 at 512^3
+(14%), four A100 from 0.045 to 0.041 and from 0.306 to 0.268 (12%).
+
+**Overlap of the alltoall** (handoff item 4) was conditional on the
+alltoall being the largest single item after item 1.  It is not: on
+four A100 the alltoall is 18% of the step at 512^3 and 23% at 256^3,
+against 25-30% for the products with their transforms and `buildrhs`,
+and on one GPU there is none.  Not done; it stays the next thing to do
+for the multi-GPU step (NEXT_SESSION.md).
+
+**Where the time goes now** (one A100, bench_256, nsys kernel summary of
+the final build; four A100 from the timer of `jobs/horeka_profile.slurm`):
+line solver 27% (three kernels, 2.05 ms for the sweep), `buildrhs` 14%,
+cuFFT 25% (four transforms), tiled transpose 8%, `build_products` 8%,
+`buildrhs_prepare` 4.5%, `assemble_vvdz` 3.5%; on four GPUs the products
+phase 25-30%, the alltoall 18-23%, the implicit solves 13-17%, pack/unpack
+12-13%.
+
+**Result** of the session (`jobs/horeka_bench_all.slurm`, same day, all
+changes in; the README table; the 4-GPU tests and the 4-GPU field
+against the CPU run at 3e-14):
+
+| deck | 1 A100 | 4 A100 | before the session, 1 / 4 |
+| --- | --- | --- | --- |
+| bench_64 | 0.0145 | | 0.0160 / |
+| bench_256 | 0.0986 | 0.0385 | 0.113 / 0.0425 |
+| bench_512 | 0.819 | 0.262 | 0.955 / 0.296 |

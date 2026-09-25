@@ -503,6 +503,13 @@ that reversing it is an addition, not a rewrite.
   outside those two files.  Re-adding AMD is then the channel's existing
   hipfft/hipfort blocks in two files plus a Makefile block for `amdflang`
   or `ftn`.
+  *Used once (transpose session, FINDINGS.md):* the tiled transpose of
+  `hst_mpi.f90` is a CUDA Fortran kernel with a `shared` tile, because
+  nvfortran's OpenMP either leaves a team-private tile in global memory
+  (`teams loop`) or generates slow inner loops (`teams distribute` +
+  `parallel do`), and the `allocate` directive with `omp_pteam_mem_alloc`
+  is not recognised.  The plain loop stays as the CPU path (`#else`); an
+  AMD port writes the same 40 lines in HIP Fortran or keeps the plain loop.
 - Namelist input instead of the INI parser; Makefile instead of CMake; no
   fypp.  Each removes a dependency that HoreKA does not provide by default.
 - Uniform `y` grid, no `htcoeff`; the stencil code stays general.
