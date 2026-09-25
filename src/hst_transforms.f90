@@ -130,11 +130,11 @@ contains
     y_first = ny0
     y_last = nyN
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(rVVdx, dx, dy, dz, y_first, y_last, nxd, nzB) private(i, j, k, tmp) reduction(max:cfl)
+    !$omp shared(rVVdx, dx, dyl, dz, y_first, y_last, nxd, nzB) private(i, j, k, tmp) reduction(max:cfl)
     do j = 1, 2*nxd
       do k = 1, nzB
         do i = y_first, y_last
-          tmp = abs(rVVdx(j, k, i, 1))/dx + abs(rVVdx(j, k, i, 2))/dy + abs(rVVdx(j, k, i, 3))/dz
+          tmp = abs(rVVdx(j, k, i, 1))/dx + abs(rVVdx(j, k, i, 2))/dyl(i) + abs(rVVdx(j, k, i, 3))/dz
           cfl = max(cfl, tmp)
         end do
       end do

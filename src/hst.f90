@@ -27,6 +27,7 @@ program hst
   use hst_io
   use hst_stats
   use hst_pressure
+  use hst_stokes
 #ifdef HAVE_CUDA
   use omp_lib
 #endif
@@ -59,6 +60,8 @@ program hst
   call make_output_dirs()
   call restart_read('Dati.cart.out')
   !$omp target update to(V)
+  call stokes_setup()
+  call stokes_apply()
   do m = 1, 3
     call fill_ghosts(m)
   end do

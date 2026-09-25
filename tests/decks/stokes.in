@@ -1,0 +1,8 @@
+! Stokes-layer test deck (tests/test_stokes): no fluctuations, stretched grid
+! (ystretch 3: 2.3e-5; 1.5 gives 2.6e-3, the eps*delta smoothing of |y| is then under-resolved),
+! the mean spanwise profile must follow the analytic layer after the
+! two-period prescription window.
+&mesh  nx = 3, ny = 128, nz = 3, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0, ystretch = 3.0 /
+&physics  re = 1000.0, S = 1.0, linear = .false., sl_amplitude = 0.5, sl_period = 1.0, sl_delta = 0.05, sl_start = 0.0 /
+&time_control  deltat = 0.005, cflmax = 0.0, t_max = 3.0, nstep = 100000, dt_stat = 1.0, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.0, seed = 1, kpeak = 4.0 /

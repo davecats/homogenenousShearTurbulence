@@ -152,7 +152,7 @@ contains
     if (has_terminal) then
       head = 'nx='//str_i(nx)//' '//TAB//'ny='//str_i(nz)//' '//TAB//'nz='//str_i(ny + 1)// &
              ' '//TAB//'alpha0='//str_r(alfa0)//' '//TAB//'beta0='//str_r(beta0)// &
-             ' '//TAB//'htcoeff=-1 '//TAB//'Re='//str_r(re)//' '//TAB//'Pr=0.71'//LF// &
+             ' '//TAB//'htcoeff='//str_r(merge(ystretch, -1.0d0, ystretch > 0.0d0))//' '//TAB//'Re='//str_r(re)//' '//TAB//'Pr=0.71'//LF// &
              'deltat='//str_r(deltat)//' '//TAB//'t_max='//str_r(t_max)//' '//TAB// &
              'dt_field='//str_r(dt_field)//' '//TAB//'dt_save='//str_r(dt_save)//LF// &
              't_field='//str_r(time)//LF// &

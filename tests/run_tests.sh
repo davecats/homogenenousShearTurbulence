@@ -19,10 +19,12 @@ run 1     test_kelvin kelvin.in
 run 1     test_kelvin kelvin_exact.in
 run 1     test_kelvin kelvin_s2const.in
 run 1     test_kelvin kelvin_s2osc.in
+run 1     test_kelvin kelvin_stretched.in
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in
 run 1     test_forcing pressure.in
 run "$np" test_conservation pressure.in
+run "$np" test_stokes stokes.in
 rm -rf "$work"
 [ $status -eq 0 ] && echo "ALL PASSED" || echo "SOME FAILED"
 exit $status

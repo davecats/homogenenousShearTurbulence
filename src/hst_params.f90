@@ -23,6 +23,7 @@ module hst_params
   integer(C_INT), save :: nxd, nzd            ! 3/2-padded transform sizes
   real(C_DOUBLE), save :: alfa0, beta0        ! fundamental wavenumbers
   real(C_DOUBLE), save :: lx, ly, lz          ! box; ly is an input, lx, lz derived
+  real(C_DOUBLE), save :: ystretch            ! tanh clustering of y at mid-box (0 = uniform)
   !$omp declare target(ny)
 
   !------------------------------------------------------------- physics ----
@@ -33,6 +34,9 @@ module hst_params
   ! unsteady spanwise mean shear dW/dy = S2(t) = s2_amplitude * sin(2 pi (t - s2_start)/s2_period)
   ! for t >= s2_start (constant s2_amplitude when s2_period = 0); zero amplitude switches it off
   real(C_DOUBLE), save :: s2_amplitude, s2_period, s2_start
+  ! Stokes layer: oscillating spanwise mean profile at mid-box (hst_stokes)
+  real(C_DOUBLE), save :: sl_amplitude, sl_period, sl_delta, sl_start
+  logical, save :: sl_bodyforce, sl_ramp
   !$omp declare target(ni, S)
 
   !------------------------------------------------------- clock and I/O ----
@@ -57,6 +61,9 @@ module hst_params
 
   !--------------------------------------------------- derived grid data ----
   real(C_DOUBLE), allocatable, save :: y(:)             ! y(-2:ny+1)
+  real(C_DOUBLE), allocatable, save :: dyl(:)           ! dyl(0:ny-1): row spacing 0.5 (y(iy+1) - y(iy-1))
+  real(C_DOUBLE), allocatable, save :: fy(:)            ! fy(-2:ny+1): body force on the mean w (Stokes layer)
+  integer(C_INT), allocatable, save :: inlayer(:)       ! inlayer(0:ny-1): 1 inside the Stokes layer
   real(C_DOUBLE), allocatable, save :: der(:, :, :)     ! der(0:ny-1, 0:3, -2:2), see hst_derivatives
   real(C_DOUBLE), allocatable, save :: k2(:, :)         ! alfa^2+beta^2 (iz, ix)
   complex(C_DOUBLE_COMPLEX), allocatable, save :: ialfa(:), ibeta(:)

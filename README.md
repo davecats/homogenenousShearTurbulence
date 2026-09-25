@@ -10,7 +10,9 @@ findings made on the way are in [PLAN.md](PLAN.md).
 
 Incompressible Navier-Stokes fluctuations about the mean flow `U = S*y`,
 optionally with an unsteady spanwise component `W = S2(t)*y`
-(`S2 = A sin(2 pi (t - t0)/T)`, the `S2data.cpl` law), in a
+(`S2 = A sin(2 pi (t - t0)/T)`, the `S2data.cpl` law) or a Stokes layer
+(an oscillating spanwise profile at mid-box driven by its body force, the
+`SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (sixth-order, five-point) finite differences in `y`, velocity-vorticity
@@ -78,6 +80,8 @@ them unchanged, and its fields can be used as restart files here.
   `diss = ly/2 <grad u : grad u>` without `nu`, computed here from the
   compact derivatives; CPL naming, so `uw/2` is `ly/2 <u v>` in our axes).
 - `variances_runtime.dat`: `time uu vv ww uv` (CPL naming, `ly <..>`).
+- `stokes_runtime.dat` (with a Stokes layer): `time energy_out energy_in
+  diss_out diss_in`, region averages inside and outside the layer.
 - `Dati.cart.out`: restart file, every `dt_save` and at the end.
 - `fields/field<n>.fld`: velocity snapshots every `dt_field`;
   `p_fields/pField<n>.fld`: the pressure at the same times.  The two
@@ -113,6 +117,8 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
   for `u = sin(ky)`, `w = sin(kx)`.
 - `test_conservation`: energy input of each nonlinear product on a random
   field (`uu`, `vv`, `ww` vanish, the cross terms cancel).
+- `test_stokes`: the mean profile of a body-force-driven Stokes layer
+  against the analytic layer after the prescription window (2.3e-5).
 
 The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
 runs with different rank counts are bit-identical on the GPU.  Against the

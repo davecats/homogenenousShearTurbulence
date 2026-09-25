@@ -617,6 +617,43 @@ the end points of the tilt.  Nonlinear side-by-side with `scddns`
 `gamma_y` agree to 1e-15, energy to 2e-6, `uw/2` to 7e-5, `vw/2` to
 2e-6 absolute.
 
+**Stokes layer and stretched grid (section 10 wish, done).**  `&mesh`
+takes `ystretch` (the `htcoeff` tanh clustering at mid-box of
+`scddnsdata.cpl`; the stencil weights were already general, the row
+spacing `dyl` now enters the CFL estimate and the statistics as
+integration weights).  `&physics` takes `sl_amplitude`, `sl_period`,
+`sl_delta`, `sl_start`, `sl_bodyforce` (default true, the CPL
+`bodyforce`/`bf_dvw` flags) and `sl_ramp` (the `smoothStep` flag).
+`hst_stokes.f90` holds the profile
+`W = A exp(-s) cos(omega (t - t0) - s)`, `s = sqrt((y - ly/2)^2/delta^2 + 0.01)`,
+and its body force `f = dW/dt - nu W''` in closed form (checked against
+the `bodyF` expression of `SLdata.cpl` term by term).  With the body
+force the mean `w` equation carries `f` and drops its Reynolds-stress
+divergence (`bf_dvw`), so the mean profile is exactly `W` whatever the
+turbulence does; the profile is prescribed outright during the first two
+periods and on the two edge rows, as `apply_SL` does.  Without the body
+force it is prescribed at every substep.  Two differences from the CPL
+code, both deliberate: the force is added D0-weighted like every other
+term (`SLdata.cpl` adds it raw, a second-order error in the applied
+force), and the two-period window counts from `sl_start` rather than from
+time zero.  `stokes_runtime.dat` carries the region averages of
+`<u_i u_i>` and `<grad u : grad u>` inside and outside `|y - ly/2| < 8 delta`
+(the `energy_in/out`, `diss_in/out` of the CPL `Runtimedata`).
+
+Checks: `test_stokes` starts from no fluctuations and runs three
+periods, one of them beyond the prescription window; the mean profile
+then agrees with the analytic layer to 2.3e-5 (ny = 128, `ystretch = 3`,
+`delta = 0.05`).  The error is spatial and comes from the `eps = 0.1`
+smoothing of `|y|`, a feature of width `eps delta`: with `ystretch =
+1.5` it is 2.6e-3, unchanged by halving the time step, and falls to
+1.1e-4 with twice the points or twice `delta`.  The Kelvin test on the
+stretched grid gives 7e-8.  No side-by-side with `hst-main` was possible:
+its `StokesLayer` build does not compile as delivered (`SLdata` is used
+after `S1data`, which needs its `fy`, and the S2 header bookkeeping is
+undeclared on that path, and `updategamma` of the S2 path is called
+unguarded); three scratch-copy fixes were tried and the build still
+failed, so that path of `hst-main` is unmaintained.
+
 **Long sheared run (WP5).**  The default deck (box 3:2:1, 64x128x64 modes,
 Re = 1000, S = 1, cflmax = 0.8) run to S t = 100 on the RTX 3060 (57324
 steps, 0.18 s/step).  Averages over S t = 30..100 (701 samples):
@@ -641,11 +678,8 @@ every 20 time units.
 ## 10. Wished features (not yet implemented)
 
 - ~~Unsteady spanwise shear `S2`~~: done (section 8).
-- **Stokes layer and its body force** (`SLdata.cpl`): a prescribed
-  oscillating spanwise profile `w(y, t)` localised at mid-box, imposed on
-  the mean mode, plus the equivalent body force `fy(y, t)` on the mean
-  `w` equation; needs the stretched grid (`htcoeff`) to resolve the layer,
-  which the stencil code already supports.
+- ~~Stokes layer and its body force~~: done (section 8), with the
+  stretched grid (`ystretch`).
 - ~~CPL-compatible files~~: done, as the only format (section 8).
 - **Pressure cadence**: the pressure is already computed only at snapshot
   times (`dt_field`); a separate `dt_pressure` would decouple the two.

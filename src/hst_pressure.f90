@@ -89,11 +89,11 @@ contains
     ! zero-mean gauge for the (0,0) mode
     pmean = 0.0d0
     if (has_average) then
-      !$omp target teams distribute parallel do default(none) shared(p, ny) private(iy) reduction(+:pmean)
+      !$omp target teams distribute parallel do default(none) shared(p, dyl, ny) private(iy) reduction(+:pmean)
       do iy = 0, ny - 1
-        pmean = pmean + dreal(p(iy, 0, 0))
+        pmean = pmean + dreal(p(iy, 0, 0))*dyl(iy)
       end do
-      pmean = pmean/ny
+      pmean = pmean/ly
       !$omp target teams distribute parallel do default(none) shared(p, ny, pmean) private(iy)
       do iy = 0, ny - 1
         p(iy, 0, 0) = dcmplx(dreal(p(iy, 0, 0)) - pmean, 0.0d0)

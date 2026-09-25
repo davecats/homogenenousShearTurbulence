@@ -26,6 +26,7 @@ module hst_equations
   use, intrinsic :: iso_c_binding
   use hst_params
   use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
+  use hst_stokes, only: stokes_active, stokes_force, stokes_apply
   use hst_linsolve, only: solve_component, apply_dy, unweight_d0, KIND_D2V, KIND_ETA
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -61,6 +62,10 @@ contains
       call shear_shift(dt_sub)
       time = time + dt_sub
       call linsolve(RK_rai(1, i)/deltat)
+      if (stokes_active()) then
+        call stokes_apply()
+        call fill_ghosts(3)
+      end if
     end do
   end subroutine timestep
 
@@ -73,12 +78,13 @@ contains
     real(C_DOUBLE), intent(in) :: ODE(3)
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f
-    real(C_DOUBLE) :: helm, biharm, s2now
+    real(C_DOUBLE) :: helm, biharm, s2now, force
 
     s2now = s2_of(time)
+    call stokes_force(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, memrhs, oldrhs, der, k2, ialfa, ibeta, ni, S, s2now, deltat, ODE, nx0, nxN, nz, ny) &
-    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, helm, biharm)
+    !$omp shared(V, memrhs, oldrhs, der, k2, ialfa, ibeta, ni, S, s2now, fy, deltat, ODE, nx0, nxN, nz, ny) &
+    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, helm, biharm, force)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = 0, ny - 1
@@ -93,13 +99,14 @@ contains
           memrhs(iy, iz, ix, 2) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 2)
           oldrhs(iy, iz, ix, 2) = 0.0d0
           ! eta equation (mean mode: u and w packed as one complex number)
-          unkn = 0.0d0; impl = 0.0d0; expl = 0.0d0
+          unkn = 0.0d0; impl = 0.0d0; expl = 0.0d0; force = 0.0d0
           do j = -2, 2
             helm = der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)
             if (ix == 0 .and. iz == 0) then
               f = dcmplx(dreal(V(iy + j, iz, ix, 1)), dreal(V(iy + j, iz, ix, 3)))
               unkn = unkn + der(iy, 0, j)*f
               impl = impl + ni*der(iy, 2, j)*f
+              force = force + der(iy, 0, j)*fy(iy + j)      ! Stokes-layer body force on the mean w (D0-weighted)
             else
               f = ibeta(iz)*V(iy + j, iz, ix, 1) - ialfa(ix)*V(iy + j, iz, ix, 3)
               unkn = unkn + der(iy, 0, j)*f
@@ -107,6 +114,7 @@ contains
             end if
             expl = expl + (s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
           end do
+          if (ix == 0 .and. iz == 0) expl = expl + dcmplx(0.0d0, force)
           memrhs(iy, iz, ix, 1) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 1) + ODE(2)*expl
           oldrhs(iy, iz, ix, 1) = expl
         end do
@@ -137,9 +145,13 @@ contains
     integer(C_INT), intent(in) :: m
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, rhsu, rhsw, expl, e
+    logical :: no_mean_vw
 
+    ! with the Stokes-layer body force the mean w equation carries no
+    ! Reynolds-stress divergence (bf_dvw of hst-main): the profile stays W
+    no_mean_vw = (stokes_active() .and. sl_bodyforce)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, m, nx0, nxN, nz, ny) &
+    !$omp shared(V, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, m, nx0, nxN, nz, ny, no_mean_vw) &
     !$omp private(ix, iy, iz, j, d0, d1, d2, rhsu, rhsw, expl, e)
     do ix = nx0, nxN
       do iz = -nz, nz
@@ -165,6 +177,7 @@ contains
             expl = ialfa(ix)*d2 + ialfa(ix)*k2(iz, ix)*d0
           case (5)   ! vw
             rhsu = 0.0d0; rhsw = -d1
+            if (no_mean_vw .and. ix == 0 .and. iz == 0) rhsw = 0.0d0
             expl = ibeta(iz)*d2 + ibeta(iz)*k2(iz, ix)*d0
           case default   ! uw
             rhsu = -ibeta(iz)*d0; rhsw = -ialfa(ix)*d0

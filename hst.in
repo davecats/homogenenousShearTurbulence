@@ -9,6 +9,7 @@
   alfa0 = 2.0943951023931953    ! 2*pi/lx, lx = 3
   beta0 = 6.283185307179586     ! 2*pi/lz, lz = 1
   ly = 2.0
+  ystretch = 0.0                ! tanh clustering of the y points at mid-box (0 = uniform)
 /
 
 &physics
@@ -19,6 +20,12 @@
   s2_amplitude = 0.0            ! unsteady spanwise shear dW/dy = S2(t): amplitude (0 = off),
   s2_period = 0.0               !   period of S2 = A sin(2 pi (t - start)/period) (0 = constant A),
   s2_start = 0.0                !   time at which it switches on
+  sl_amplitude = 0.0            ! Stokes layer at mid-box (0 = off): W = A exp(-s) cos(2 pi (t - t0)/T - s),
+  sl_period = 1.0               !   s = |y - ly/2|/delta; needs ystretch > 0 to resolve delta
+  sl_delta = 0.02
+  sl_start = 0.0
+  sl_bodyforce = .true.         ! drive it by its body force (else prescribe the profile)
+  sl_ramp = .false.             ! cubic ramp over the first period instead of a hard switch-on
 /
 
 &time_control
