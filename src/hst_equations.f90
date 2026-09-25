@@ -8,11 +8,12 @@
 ! and for the (0,0) mode eta packs the two real mean profiles (u, w).
 !
 !   d/dt d2v = ni (D4 - 2 k2 D2 + k2^2 D0) v  + nonlinear terms
-!   d/dt eta = ni (D2 - k2 D0) eta            + nonlinear terms - S i beta D0 v
+!   d/dt eta = ni (D2 - k2 D0) eta            + nonlinear terms + (S2 i alfa - S i beta) D0 v
 !
-! The mean-shear advection S y d/dx is not in these: it is integrated
-! exactly by the phase exp(-i alfa S y dt) applied after each substep
-! (shear_shift).  Time stepping: RK3 (Rai-Moin) for the explicit terms,
+! with the optional unsteady spanwise mean shear W = S2(t) y (S2data.cpl).
+! The mean-shear advection (S y d/dx + S2 y d/dz) is not in these: it is
+! integrated exactly by the phase exp(-i (alfa S dt + beta int S2 dt) y)
+! applied after each substep (shear_shift).  Time stepping: RK3 (Rai-Moin) for the explicit terms,
 ! Crank-Nicolson for the viscous ones, coefficients ODE = RK_rai(:, i):
 !   rhs = ODE(1) unkn/deltat + impl + ODE(2) expl_new - ODE(3) expl_old
 ! then (ODE(1)/deltat - viscous) unkn_new = rhs.
@@ -24,7 +25,7 @@ module hst_equations
 
   use, intrinsic :: iso_c_binding
   use hst_params
-  use hst_derivatives, only: fill_ghosts, fill_ghosts_field
+  use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
   use hst_linsolve, only: solve_component, apply_dy, unweight_d0, KIND_D2V, KIND_ETA
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -72,10 +73,11 @@ contains
     real(C_DOUBLE), intent(in) :: ODE(3)
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f
-    real(C_DOUBLE) :: helm, biharm
+    real(C_DOUBLE) :: helm, biharm, s2now
 
+    s2now = s2_of(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, memrhs, oldrhs, der, k2, ialfa, ibeta, ni, S, deltat, ODE, nx0, nxN, nz, ny) &
+    !$omp shared(V, memrhs, oldrhs, der, k2, ialfa, ibeta, ni, S, s2now, deltat, ODE, nx0, nxN, nz, ny) &
     !$omp private(ix, iy, iz, j, unkn, impl, expl, f, helm, biharm)
     do ix = nx0, nxN
       do iz = -nz, nz
@@ -103,7 +105,7 @@ contains
               unkn = unkn + der(iy, 0, j)*f
               impl = impl + ni*helm*f
             end if
-            expl = expl - S*ibeta(iz)*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
+            expl = expl + (s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
           end do
           memrhs(iy, iz, ix, 1) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 1) + ODE(2)*expl
           oldrhs(iy, iz, ix, 1) = expl
@@ -196,26 +198,28 @@ contains
   subroutine shear_shift(dt_sub)
     real(C_DOUBLE), intent(in) :: dt_sub
     integer(C_INT) :: ix, iy, iz
-    real(C_DOUBLE) :: shift_old, shift_new
+    real(C_DOUBLE) :: dgx, dgz, sx0, sz0, sx1, sz1
     complex(C_DOUBLE_COMPLEX) :: f
 
+    dgx = S*dt_sub                              ! streamwise displacement over the substep
+    dgz = s2_integral(time, time + dt_sub)      ! spanwise displacement over the substep
     if (exact_shift) then
-      shift_old = modulo(S*time*ly, lx)
-      shift_new = modulo(S*(time + dt_sub)*ly, lx)
-      call shift_unweighted(V(:, :, :, 1), dt_sub, shift_old, shift_new)
-      call shift_unweighted(V(:, :, :, 2), dt_sub, shift_old, shift_new)
-      call shift_unweighted(oldrhs(:, :, :, 1), dt_sub, shift_old, shift_new)
-      call shift_unweighted(oldrhs(:, :, :, 2), dt_sub, shift_old, shift_new)
+      call shear_shifts(time, sx0, sz0)
+      call shear_shifts(time + dt_sub, sx1, sz1)
+      call shift_unweighted(V(:, :, :, 1), dgx, dgz, sx0, sz0, sx1, sz1)
+      call shift_unweighted(V(:, :, :, 2), dgx, dgz, sx0, sz0, sx1, sz1)
+      call shift_unweighted(oldrhs(:, :, :, 1), dgx, dgz, sx0, sz0, sx1, sz1)
+      call shift_unweighted(oldrhs(:, :, :, 2), dgx, dgz, sx0, sz0, sx1, sz1)
       return
     end if
     ! (no default(none): nvfortran 25.9 rejects the grid array y in a
     !  shared clause here, although it accepts it elsewhere)
     !$omp target teams distribute parallel do collapse(3) &
-    !$omp shared(V, oldrhs, y, alfa0, S, dt_sub, nx0, nxN, nz, ny) private(ix, iy, iz, f)
+    !$omp shared(V, oldrhs, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny) private(ix, iy, iz, f)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = 0, ny - 1
-          f = exp(dcmplx(0.0d0, -alfa0*ix*S*y(iy)*dt_sub))
+          f = exp(dcmplx(0.0d0, -(alfa0*ix*dgx + beta0*iz*dgz)*y(iy)))
           V(iy, iz, ix, 1) = V(iy, iz, ix, 1)*f
           V(iy, iz, ix, 2) = V(iy, iz, ix, 2)*f
           oldrhs(iy, iz, ix, 1) = oldrhs(iy, iz, ix, 1)*f
@@ -227,23 +231,23 @@ contains
 
   ! q <- D0 [ phase * (D0^{-1} q) ]  with D0 at the old time on the way in
   ! and at the new time on the way out; memrhs(:, :, :, 1) is the scratch.
-  subroutine shift_unweighted(q, dt_sub, shift_old, shift_new)
+  subroutine shift_unweighted(q, dgx, dgz, sx0, sz0, sx1, sz1)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: q(ny0 - 2:, -nz:, nx0:)
-    real(C_DOUBLE), intent(in) :: dt_sub, shift_old, shift_new
+    real(C_DOUBLE), intent(in) :: dgx, dgz, sx0, sz0, sx1, sz1
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: acc
 
-    call unweight_d0(q, memrhs(:, :, :, 1), shift_old)
+    call unweight_d0(q, memrhs(:, :, :, 1), sx0, sz0)
     !$omp target teams distribute parallel do collapse(3) &
-    !$omp shared(memrhs, y, alfa0, S, dt_sub, nx0, nxN, nz, ny) private(ix, iy, iz)
+    !$omp shared(memrhs, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny) private(ix, iy, iz)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = 0, ny - 1
-          memrhs(iy, iz, ix, 1) = memrhs(iy, iz, ix, 1)*exp(dcmplx(0.0d0, -alfa0*ix*S*y(iy)*dt_sub))
+          memrhs(iy, iz, ix, 1) = memrhs(iy, iz, ix, 1)*exp(dcmplx(0.0d0, -(alfa0*ix*dgx + beta0*iz*dgz)*y(iy)))
         end do
       end do
     end do
-    call fill_ghosts_field(memrhs(:, :, :, 1), shift_new)
+    call fill_ghosts_field(memrhs(:, :, :, 1), sx1, sz1)
     !$omp target teams distribute parallel do collapse(3) default(none) &
     !$omp shared(memrhs, q, der, nx0, nxN, nz, ny) private(ix, iy, iz, j, acc)
     do ix = nx0, nxN

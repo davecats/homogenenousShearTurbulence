@@ -8,7 +8,9 @@ findings made on the way are in [PLAN.md](PLAN.md).
 
 ## What it solves
 
-Incompressible Navier-Stokes fluctuations about the mean flow `U = S*y` in a
+Incompressible Navier-Stokes fluctuations about the mean flow `U = S*y`,
+optionally with an unsteady spanwise component `W = S2(t)*y`
+(`S2 = A sin(2 pi (t - t0)/T)`, the `S2data.cpl` law), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (sixth-order, five-point) finite differences in `y`, velocity-vorticity
@@ -101,7 +103,8 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
 - `test_kelvin`: one Fourier mode in uniform shear against the closed-form
   Kelvin-mode solution with viscosity: 3.6e-4 at ny = 128 with the CPL
   treatment of the mean-shear advection (second order in dy, PLAN.md 8),
-  4e-9 with `exact_shift = .true.`.
+  4e-9 with `exact_shift = .true.`; also with constant and oscillating
+  spanwise shear S2 (4e-9).
 - `test_pressure`: Taylor-Green vortex against its exact pressure
   (1.9e-5 at ny = 64).
 - `test_taylorgreen`: Taylor-Green vortices in two orientations decay

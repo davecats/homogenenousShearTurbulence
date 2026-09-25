@@ -23,6 +23,7 @@ module hst_linsolve
 
   use, intrinsic :: iso_c_binding
   use hst_params
+  use hst_derivatives, only: shear_shifts
 
   implicit none
   private
@@ -160,22 +161,22 @@ contains
     real(C_DOUBLE), intent(in) :: lambda
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
-    real(C_DOUBLE) :: shift, coef
+    real(C_DOUBLE) :: shift_x, shift_z, coef
     complex(C_DOUBLE_COMPLEX) :: ph, wrap
 
-    shift = modulo(S*time*ly, lx)
+    call shear_shifts(time, shift_x, shift_z)
     do ix0 = nx0, nxN, line_chunk
       ix1 = min(ix0 + line_chunk - 1, nxN)
       ncol = 2*nz + 1
       nl = (ix1 - ix0 + 1)*ncol
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, field, der, k2, ni, lambda, kind, ix0, ix1, nz, ny, ncol, alfa0, shift) &
+      !$omp shared(A, X, field, der, k2, ni, lambda, kind, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
       !$omp private(ix, iz, iy, j, il, ph, wrap, coef)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
             do j = -2, 2
               if (kind == KIND_D2V) then
                 coef = lambda*(der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)) - &
@@ -221,22 +222,22 @@ contains
     integer(C_INT), intent(in) :: src
     complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
-    real(C_DOUBLE) :: shift
+    real(C_DOUBLE) :: shift_x, shift_z
     complex(C_DOUBLE_COMPLEX) :: ph, wrap, rhs
 
-    shift = modulo(S*time*ly, lx)
+    call shear_shifts(time, shift_x, shift_z)
     do ix0 = nx0, nxN, line_chunk
       ix1 = min(ix0 + line_chunk - 1, nxN)
       ncol = 2*nz + 1
       nl = (ix1 - ix0 + 1)*ncol
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, V, der, src, ix0, ix1, nz, ny, ncol, alfa0, shift) &
+      !$omp shared(A, X, V, der, src, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
       !$omp private(ix, iz, iy, j, il, ph, wrap, rhs)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
             rhs = 0.0d0
             do j = -2, 2
               wrap = 1.0d0
@@ -264,13 +265,13 @@ contains
   end subroutine apply_dy
 
   ! dst = D0^{-1} src on the interior rows: the unweighted quantity behind a
-  ! D0-weighted stencil sum.  `shift` is the streamwise displacement of the
+  ! D0-weighted stencil sum.  shift_x, shift_z are the displacements of the
   ! upper image that the wrap phase of D0 must use.  Only the interior rows
   ! of src are read.
-  subroutine unweight_d0(src, dst, shift)
+  subroutine unweight_d0(src, dst, shift_x, shift_z)
     complex(C_DOUBLE_COMPLEX), intent(in) :: src(ny0 - 2:, -nz:, nx0:)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
-    real(C_DOUBLE), intent(in) :: shift
+    real(C_DOUBLE), intent(in) :: shift_x, shift_z
     integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
     complex(C_DOUBLE_COMPLEX) :: ph, wrap
 
@@ -279,13 +280,13 @@ contains
       ncol = 2*nz + 1
       nl = (ix1 - ix0 + 1)*ncol
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, src, der, ix0, ix1, nz, ny, ncol, alfa0, shift) &
+      !$omp shared(A, X, src, der, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
       !$omp private(ix, iz, iy, j, il, ph, wrap)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
             do j = -2, 2
               wrap = 1.0d0
               if (iy + j >= ny) wrap = ph

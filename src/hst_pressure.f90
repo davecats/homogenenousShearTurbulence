@@ -1,7 +1,7 @@
 ! Pressure, computed online at snapshot times.
 !
 ! The fluctuation pressure in the mean shear U = S y satisfies, per mode,
-!   (D2 - k2 D0) p = D0 [ alfa^2 uu + beta^2 ww + 2 alfa beta uw - 2 S i alfa v ]
+!   (D2 - k2 D0) p = D0 [ alfa^2 uu + beta^2 ww + 2 alfa beta uw - 2 (S i alfa + S2 i beta) v ]
 !                    - D2 vv - 2 i alfa D1 uv - 2 i beta D1 vw
 ! (the D0-weighted form of  lap p = -d_i d_j (u_i u_j) - 2 S dv/dx), with
 ! the same shear-periodic wrap as the velocity, solved by the cyclic line
@@ -21,6 +21,7 @@ module hst_pressure
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral
   use hst_linsolve, only: solve_component, KIND_POISSON
   use hst_io, only: field_write
+  use hst_derivatives, only: s2_of
 
   implicit none
   private
@@ -34,15 +35,16 @@ contains
     complex(C_DOUBLE_COMPLEX), intent(inout) :: p(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: m, ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, term
-    real(C_DOUBLE) :: pmean, pmean_global
+    real(C_DOUBLE) :: pmean, pmean_global, s2now
     integer :: ierr
 
+    s2now = s2_of(time)
     call transform_to_physical()
     do m = 1, 6
       call build_products(m)
       call products_to_spectral()
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(p, VVdz, V, der, izd, ialfa, ibeta, S, m, nx0, nxN, nz, ny) &
+      !$omp shared(p, VVdz, V, der, izd, ialfa, ibeta, S, s2now, m, nx0, nxN, nz, ny) &
       !$omp private(ix, iy, iz, j, d0, d1, d2, term)
       do ix = nx0, nxN
         do iz = -nz, nz
@@ -73,7 +75,7 @@ contains
               do j = -2, 2
                 d0 = d0 + der(iy, 0, j)*V(iy + j, iz, ix, 2)
               end do
-              p(iy, iz, ix) = term - 2.0d0*S*ialfa(ix)*d0
+              p(iy, iz, ix) = term - 2.0d0*(S*ialfa(ix) + s2now*ibeta(iz))*d0
             else
               p(iy, iz, ix) = p(iy, iz, ix) + term
             end if

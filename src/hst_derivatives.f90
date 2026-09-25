@@ -20,7 +20,8 @@ module hst_derivatives
 
   implicit none
   private
-  public :: setup_derivatives, fill_ghosts, fill_ghosts_field, shear_shift_length
+  public :: setup_derivatives, fill_ghosts, fill_ghosts_field, shear_shifts
+  public :: s2_of, s2_integral, gamma_y_of
 
 contains
 
@@ -75,30 +76,74 @@ contains
     end do
   end function solve5
 
-  ! The streamwise displacement of the upper image at the current time,
-  ! reduced to one box length: exp(-i kx shift) is periodic in it.
-  real(C_DOUBLE) function shear_shift_length()
-    shear_shift_length = modulo(S*time*ly, lx)
-  end function shear_shift_length
+  !------------------------------------------------- unsteady spanwise shear ----
+  ! S2(t) as in S2data.cpl: zero before s2_start, then s2_amplitude times
+  ! sin(omega (t - s2_start)) with omega = 2 pi / s2_period, or constant
+  ! when s2_period = 0.
+  real(C_DOUBLE) function s2_of(t)
+    real(C_DOUBLE), intent(in) :: t
+    real(C_DOUBLE), parameter :: TWOPI = 6.283185307179586d0
+    s2_of = 0.0d0
+    if (s2_amplitude == 0.0d0 .or. t < s2_start) return
+    if (s2_period > 0.0d0) then
+      s2_of = s2_amplitude*sin(TWOPI/s2_period*(t - s2_start))
+    else
+      s2_of = s2_amplitude
+    end if
+  end function s2_of
+
+  ! Integral of S2 from t1 to t2 (t1 <= t2), closed form.
+  real(C_DOUBLE) function s2_integral(t1, t2)
+    real(C_DOUBLE), intent(in) :: t1, t2
+    real(C_DOUBLE), parameter :: TWOPI = 6.283185307179586d0
+    real(C_DOUBLE) :: a, b, omega
+    s2_integral = 0.0d0
+    if (s2_amplitude == 0.0d0 .or. t2 <= s2_start) return
+    a = max(t1, s2_start); b = t2
+    if (s2_period > 0.0d0) then
+      omega = TWOPI/s2_period
+      s2_integral = s2_amplitude/omega*(cos(omega*(a - s2_start)) - cos(omega*(b - s2_start)))
+    else
+      s2_integral = s2_amplitude*(b - a)
+    end if
+  end function s2_integral
+
+  ! The spanwise displacement of the upper image, gamma_y(t) = int S2 dt.
+  real(C_DOUBLE) function gamma_y_of(t)
+    real(C_DOUBLE), intent(in) :: t
+    gamma_y_of = s2_integral(s2_start, t)
+  end function gamma_y_of
+
+  ! The streamwise and spanwise displacements of the upper image at time t,
+  ! each reduced to one box length (the wrap phase is periodic in them):
+  !   f_hat(ny) = f_hat(0) * exp(-i (kx shift_x + kz shift_z))
+  subroutine shear_shifts(t, shift_x, shift_z)
+    real(C_DOUBLE), intent(in) :: t
+    real(C_DOUBLE), intent(out) :: shift_x, shift_z
+    shift_x = modulo(S*t*ly, lx)
+    shift_z = modulo(gamma_y_of(t)*ly, lz)
+  end subroutine shear_shifts
 
   ! Ghost rows of component c of V from its interior rows, at the current time.
   subroutine fill_ghosts(c)
     integer(C_INT), intent(in) :: c
-    call fill_ghosts_field(V(:, :, :, c), shear_shift_length())
+    real(C_DOUBLE) :: shift_x, shift_z
+    call shear_shifts(time, shift_x, shift_z)
+    call fill_ghosts_field(V(:, :, :, c), shift_x, shift_z)
   end subroutine fill_ghosts
 
   ! Ghost rows of any field with the layout of a component of V, for the
-  ! streamwise displacement `shift` of the upper image.
-  subroutine fill_ghosts_field(field, shift)
+  ! displacements shift_x, shift_z of the upper image.
+  subroutine fill_ghosts_field(field, shift_x, shift_z)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
-    real(C_DOUBLE), intent(in) :: shift
+    real(C_DOUBLE), intent(in) :: shift_x, shift_z
     integer(C_INT) :: ix, iz
     complex(C_DOUBLE_COMPLEX) :: ph
     !$omp target teams distribute parallel do collapse(2) default(none) &
-    !$omp shared(field, nx0, nxN, nz, ny, alfa0, shift) private(ix, iz, ph)
+    !$omp shared(field, nx0, nxN, nz, ny, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
     do ix = nx0, nxN
       do iz = -nz, nz
-        ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
+        ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
         field(ny, iz, ix) = field(0, iz, ix)*ph
         field(ny + 1, iz, ix) = field(1, iz, ix)*ph
         field(-1, iz, ix) = field(ny - 1, iz, ix)*conjg(ph)

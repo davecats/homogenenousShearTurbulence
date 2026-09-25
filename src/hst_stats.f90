@@ -19,6 +19,7 @@ module hst_stats
   use mpi_f08
   use hst_params
   use hst_linsolve, only: apply_dy
+  use hst_derivatives, only: s2_of, gamma_y_of
 
   implicit none
   private
@@ -99,7 +100,7 @@ contains
       ! energy = ly/2 <q2>, diss = ly/2 <grad u : grad u>, stresses ly/2 <..>, variances ly <..>
       write (*, '(F12.5,2X,ES11.4,2X,F8.4,4(2X,ES13.6))') time, deltat, cfl*deltat, &
         0.5d0*glob(1), 0.5d0*glob(2), 0.5d0*glob(3), 0.5d0*glob(4)
-      write (unit_rt, '(13(ES23.15,1X))') time, mfx, glob(9), S, 0.0d0, S*time, 0.0d0, deltat, cfl*deltat, &
+      write (unit_rt, '(13(ES23.15,1X))') time, mfx, glob(9), S, s2_of(time), S*time, gamma_y_of(time), deltat, cfl*deltat, &
         0.5d0*glob(1), 0.5d0*glob(2), 0.5d0*glob(3), 0.5d0*glob(4)
       write (unit_var, '(5(ES23.15,1X))') time, glob(5), glob(7), glob(6), glob(8)
       flush (unit_rt); flush (unit_var)

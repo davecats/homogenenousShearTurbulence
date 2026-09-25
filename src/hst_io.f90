@@ -34,6 +34,7 @@ module hst_io
   use hst_params
   use hst_mpi, only: cpl_view_type, cpl_pview_type
   use hst_initial, only: generate_initial_field
+  use hst_derivatives, only: s2_of, gamma_y_of
 
   implicit none
   private
@@ -156,8 +157,8 @@ contains
              'dt_field='//str_r(dt_field)//' '//TAB//'dt_save='//str_r(dt_save)//LF// &
              't_field='//str_r(time)//LF// &
              'meanpx=0 '//TAB//'meanflowx=0 '//TAB//'meanpy=0 '//TAB//'meanflowy=0'//LF// &
-             'time='//LF//raw8(time)//LF//'S='//LF//raw8(S)//LF//'S2='//LF//raw8(0.0d0)//LF// &
-             'gamma_x='//LF//raw8(S*time)//LF//'gamma_y='//LF//raw8(0.0d0)//LF//'Vfield='//LF
+             'time='//LF//raw8(time)//LF//'S='//LF//raw8(S)//LF//'S2='//LF//raw8(s2_of(time))//LF// &
+             'gamma_x='//LF//raw8(S*time)//LF//'gamma_y='//LF//raw8(gamma_y_of(time))//LF//'Vfield='//LF
       hlen = index(head, 'Vfield='//LF) + 7
     end if
     call MPI_Bcast(hlen, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)

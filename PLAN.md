@@ -591,6 +591,32 @@ agrees with the CPL run to 1e-6 except the dissipation (3e-4, compact
 against centred derivatives) and the CFL number (CPL subsamples it).
 The earlier private format and `tests/to_cpl_field.py` are gone.
 
+**Unsteady spanwise shear S2 (section 10 wish, done).**  `&physics`
+takes `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
+the CPL `S2data.cpl` law `S2(t) = A sin(2 pi (t - t0)/T)` for `t >= t0`
+(`A`, `T`, `t0_SL` there).  It enters in four places: the wrap phase of
+the ghost rows and of the line-solve corners, now
+`exp(-i (kx gamma_x + kz gamma_y))` with `gamma_y = int S2 dt` in closed
+form; the exact-advection phase over a substep,
+`exp(-i (kx S dt + kz int S2 dt) y)` (both variants of `shear_shift`);
+the tilting term of eta, `(S2 i alfa - S i beta) D0 v`; and the rapid
+term of the pressure, `-2 (S i alfa + S2 i beta) v`.  `S2` and `gamma_y`
+are written to `Runtimedata` and to the field headers.  One deliberate
+difference from `S2data.cpl`: there the carried explicit term of a
+substep is shifted with the displacement of the *previous* substep
+(`delta_gamma` is updated only after `buildrhs`), here with the current
+one, as in `S1data.cpl`.
+
+Checks: the Kelvin test generalises (`ky(t) = ky0 - S kx t - kz gamma_y`,
+`eta` closed-form for constant S2, `v` for any S2 with the viscous
+integral done numerically): 4.6e-9 for constant `S2 = 0.7` and 4.1e-9 for
+`S2 = 0.7 sin(2 pi t/1.5)` with `exact_shift`; with the default advection
+5.5e-5, again exactly the `(1/6) dy^2 (ky0^2 - ky(t)^2)` prediction with
+the end points of the tilt.  Nonlinear side-by-side with `scddns`
+(`A = 0.6, T = 0.5, t0 = 0`, 20 steps from the same field): `S2` and
+`gamma_y` agree to 1e-15, energy to 2e-6, `uw/2` to 7e-5, `vw/2` to
+2e-6 absolute.
+
 **Long sheared run (WP5).**  The default deck (box 3:2:1, 64x128x64 modes,
 Re = 1000, S = 1, cflmax = 0.8) run to S t = 100 on the RTX 3060 (57324
 steps, 0.18 s/step).  Averages over S t = 30..100 (701 samples):
@@ -614,12 +640,7 @@ every 20 time units.
 
 ## 10. Wished features (not yet implemented)
 
-- **Unsteady spanwise shear `S2`** (`S2data.cpl`): a second, time-dependent
-  mean-shear component `dW/dy = S2(t)` with its own shear-periodic
-  displacement `gamma_y`.  Touches the wrap phase (it becomes
-  `exp(-i (kx gamma_x + kz gamma_y))`), `shear_shift` (phase
-  `exp(-i (kx S + kz S2) y dt)`), the tilting term (`+ S2 i alfa D0 v`),
-  and the deck (`A`, `T`, `t0`).
+- ~~Unsteady spanwise shear `S2`~~: done (section 8).
 - **Stokes layer and its body force** (`SLdata.cpl`): a prescribed
   oscillating spanwise profile `w(y, t)` localised at mid-box, imposed on
   the mean mode, plus the equivalent body force `fy(y, t)` on the mean
