@@ -71,20 +71,20 @@ program test_pressure
     call fill_ghosts(m)
   end do
 
-  call compute_pressure(memrhs(:, :, :, 2))
-  !$omp target update from(memrhs)
+  call compute_pressure(rhs(:, :, :, 2))
+  !$omp target update from(rhs)
 
   err = 0; err_other = 0
   do ix = nx0, nxN
     do iz = -nz, nz
       do iy = 0, ny - 1
         if (ix == 2*mx .and. iz == 0) then
-          err = max(err, abs(memrhs(iy, iz, ix, 2) - dcmplx(-0.125d0, 0.0d0)))
+          err = max(err, abs(rhs(iy, iz, ix, 2) - dcmplx(-0.125d0, 0.0d0)))
         else if (ix == 0 .and. iz == 0) then
           pex = -0.25d0*cos(2.0d0*ky*y(iy))
-          err = max(err, abs(memrhs(iy, iz, ix, 2) - pex))
+          err = max(err, abs(rhs(iy, iz, ix, 2) - pex))
         else
-          err_other = max(err_other, abs(memrhs(iy, iz, ix, 2)))
+          err_other = max(err_other, abs(rhs(iy, iz, ix, 2)))
         end if
       end do
     end do

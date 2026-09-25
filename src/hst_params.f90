@@ -24,6 +24,7 @@ module hst_params
   real(C_DOUBLE), save :: alfa0, beta0        ! fundamental wavenumbers
   real(C_DOUBLE), save :: lx, ly, lz          ! box; ly is an input, lx, lz derived
   real(C_DOUBLE), save :: ystretch            ! tanh clustering of y at mid-box (0 = uniform)
+  integer(C_INT), save :: line_chunk          ! x columns per line-solver batch (0 = all, hst_linsolve)
   !$omp declare target(ny)
 
   !------------------------------------------------------------- physics ----
@@ -71,9 +72,14 @@ module hst_params
   real(C_DOUBLE), save :: dx, dy, dz, factor            ! CFL spacings, 1/(2 nxd nzd)
 
   !---------------------------------------------------- solution fields ----
+  ! V: the velocity, with ghost rows.  oldrhs: the explicit terms of the
+  ! previous substep, i = 1:eta, 2:d2v.  rhs: the right-hand sides of the two
+  ! equations inside a substep (buildrhs_prepare .. linsolve, same i); free
+  ! between substeps, where it is scratch for outstats (i = 1) and for the
+  ! pressure (i = 1 right-hand side, i = 2 result).
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: V(:, :, :, :)
-  complex(C_DOUBLE_COMPLEX), allocatable, save :: oldrhs(:, :, :, :)  ! i = 1:eta, 2:d2v
-  complex(C_DOUBLE_COMPLEX), allocatable, save :: memrhs(:, :, :, :)
+  complex(C_DOUBLE_COMPLEX), allocatable, save :: oldrhs(:, :, :, :)
+  complex(C_DOUBLE_COMPLEX), allocatable, save :: rhs(:, :, :, :)
 
   !--------------------------------------- Runge-Kutta (Rai-Moin) table ----
   ! One column per substep: (1) unknown/deltat, (2) new explicit, (3) old

@@ -19,7 +19,7 @@ module hst_pressure
   use hst_params
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral
-  use hst_linsolve, only: solve_component, KIND_POISSON
+  use hst_linsolve, only: line_solve, KIND_POISSON
   use hst_io, only: field_write
   use hst_derivatives, only: s2_of
 
@@ -30,7 +30,8 @@ module hst_pressure
 contains
 
   ! p (layout of one component of V, on the device) from the current V,
-  ! whose ghost rows must be filled.  Uses the products buffers.
+  ! whose ghost rows must be filled.  Uses the products buffers and
+  ! rhs(:, :, :, 1) for the right-hand side.
   subroutine compute_pressure(p)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: p(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: m, ix, iy, iz, j
@@ -44,7 +45,7 @@ contains
       call build_products(m)
       call products_to_spectral()
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(p, VVdz, V, der, izd, ialfa, ibeta, S, s2now, m, nx0, nxN, nz, ny) &
+      !$omp shared(rhs, VVdz, V, der, izd, ialfa, ibeta, S, s2now, m, nx0, nxN, nz, ny) &
       !$omp private(ix, iy, iz, j, d0, d1, d2, term)
       do ix = nx0, nxN
         do iz = -nz, nz
@@ -75,22 +76,23 @@ contains
               do j = -2, 2
                 d0 = d0 + der(iy, 0, j)*V(iy + j, iz, ix, 2)
               end do
-              p(iy, iz, ix) = term - 2.0d0*(S*ialfa(ix) + s2now*ibeta(iz))*d0
+              rhs(iy, iz, ix, 1) = term - 2.0d0*(S*ialfa(ix) + s2now*ibeta(iz))*d0
             else
-              p(iy, iz, ix) = p(iy, iz, ix) + term
+              rhs(iy, iz, ix, 1) = rhs(iy, iz, ix, 1) + term
             end if
             ! mean mode: p_00 = -<vv>, the raw product, not its stencil
-            if (ix == 0 .and. iz == 0 .and. m == 2) p(iy, iz, ix) = -dreal(VVdz(1, 1, iy))
+            if (ix == 0 .and. iz == 0 .and. m == 2) rhs(iy, iz, ix, 1) = -dreal(VVdz(1, 1, iy))
           end do
         end do
       end do
     end do
-    call solve_component(KIND_POISSON, 0.0d0, p)
-    ! zero-mean gauge for the (0,0) mode
+    call line_solve(KIND_POISSON, 0.0d0, rhs(:, :, :, 1), p)
+    ! the singular (0,0) mode: the profile -<vv> itself, with zero mean
     pmean = 0.0d0
     if (has_average) then
-      !$omp target teams distribute parallel do default(none) shared(p, dyl, ny) private(iy) reduction(+:pmean)
+      !$omp target teams distribute parallel do default(none) shared(p, rhs, dyl, ny) private(iy) reduction(+:pmean)
       do iy = 0, ny - 1
+        p(iy, 0, 0) = rhs(iy, 0, 0, 1)
         pmean = pmean + dreal(p(iy, 0, 0))*dyl(iy)
       end do
       pmean = pmean/ly
@@ -101,14 +103,14 @@ contains
     end if
   end subroutine compute_pressure
 
-  ! Pressure of the current field to a file.  Uses memrhs(:, :, :, 2) as
-  ! scratch (free outside a substep).
+  ! Pressure of the current field to a file, computed in rhs(:, :, :, 2)
+  ! (free outside a substep).
   subroutine write_pressure(filename)
     character(len=*), intent(in) :: filename
     if (has_terminal) print '(A,F12.5)', '   writing '//trim(filename)//' at time', time
-    call compute_pressure(memrhs(:, :, :, 2))
-    !$omp target update from(memrhs)
-    call field_write(filename, memrhs(:, :, :, 2))
+    call compute_pressure(rhs(:, :, :, 2))
+    !$omp target update from(rhs)
+    call field_write(filename, rhs(:, :, :, 2))
   end subroutine write_pressure
 
 end module hst_pressure

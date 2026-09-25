@@ -22,7 +22,7 @@ module hst_stats
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
-  use hst_linsolve, only: apply_dy
+  use hst_linsolve, only: line_solve, KIND_DY
   use hst_derivatives, only: s2_of, gamma_y_of
   use hst_stokes, only: stokes_active
 
@@ -91,17 +91,17 @@ contains
     end do
     ! y derivatives of the three components, one at a time, into scratch
     do c = 1, 3
-      call apply_dy(c, memrhs(:, :, :, 1))
+      call line_solve(KIND_DY, 0.0d0, V(:, :, :, c), rhs(:, :, :, 1))
       grad = 0; g_in = 0; g_out = 0
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(memrhs, dyl, inlayer, nx0, nxN, nz, ny) private(ix, iy, iz, w, dq) reduction(+:grad, g_in, g_out)
+      !$omp shared(rhs, dyl, inlayer, nx0, nxN, nz, ny) private(ix, iy, iz, w, dq) reduction(+:grad, g_in, g_out)
       do ix = nx0, nxN
         do iz = -nz, nz
           do iy = 0, ny - 1
             if (ix == 0 .and. iz == 0) cycle
             w = 2.0d0*dyl(iy)
             if (ix == 0) w = dyl(iy)
-            dq = memrhs(iy, iz, ix, 1)
+            dq = rhs(iy, iz, ix, 1)
             grad = grad + w*dreal(dq*conjg(dq))
             if (inlayer(iy) == 1) then
               g_in = g_in + w*dreal(dq*conjg(dq))

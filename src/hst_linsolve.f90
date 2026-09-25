@@ -18,7 +18,8 @@
 !
 ! Storage is interleaved, line index first (A(iline, iy, j)), so that the
 ! threads of a kernel read consecutive addresses.  Lines are processed in
-! batches of line_chunk x columns to bound the workspace.
+! batches of line_chunk x columns (deck parameter; 0 = all columns at once,
+! the fastest) to bound the workspace A, X, Y1, Y2.
 module hst_linsolve
 
   use, intrinsic :: iso_c_binding
@@ -27,23 +28,27 @@ module hst_linsolve
 
   implicit none
   private
-  public :: init_linsolve, free_linsolve, solve_lines, solve_component, apply_dy, unweight_d0
+  public :: init_linsolve, free_linsolve, solve_lines, line_solve
   public :: A, X, Y1, Y2, nlines_max
-  public :: KIND_D2V, KIND_ETA, KIND_POISSON
+  public :: KIND_D2V, KIND_ETA, KIND_POISSON, KIND_D0, KIND_DY
 
-  integer(C_INT), parameter :: line_chunk = 16
-  integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_POISSON = 3
+  ! the systems line_solve assembles (see there)
+  integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_POISSON = 3, KIND_D0 = 4, KIND_DY = 5
   complex(C_DOUBLE_COMPLEX), allocatable, save :: A(:, :, :), X(:, :), Y1(:, :), Y2(:, :)
-  integer(C_INT), save :: nlines_max
+  integer(C_INT), save :: nlines_max, chunk
 
 contains
 
   subroutine init_linsolve()
-    nlines_max = (2*nz + 1)*min(line_chunk, nxB)
+    chunk = nxB
+    if (line_chunk > 0) chunk = min(line_chunk, nxB)
+    nlines_max = (2*nz + 1)*chunk
     allocate (A(nlines_max, 0:ny - 1, -2:2), X(nlines_max, 0:ny - 1))
     allocate (Y1(nlines_max, 0:ny - 1), Y2(nlines_max, 0:ny - 1))
     A = 0; X = 0; Y1 = 0; Y2 = 0
     !$omp target enter data map(to: A, X, Y1, Y2)
+    if (has_terminal) write (*, '(A,I0,A,I0,A,F8.1,A)') '   line solver: batches of ', chunk, ' x columns, ', &
+      nlines_max, ' lines, workspace ', 8.0d0*16.0d0*nlines_max*ny/1024.0d0**2, ' MB per rank'
   end subroutine init_linsolve
 
   subroutine free_linsolve()
@@ -148,167 +153,87 @@ contains
     end do
   end subroutine penta_substitute
 
-  ! Assemble and solve one implicit system for a field with the layout of a
-  ! component of V (pass e.g. V(:, :, :, 2)), whose interior rows hold the
-  ! right-hand side on entry and the solution on exit:
-  !   KIND_D2V     :  lambda (D2 - k2 D0) - ni (D4 - 2 k2 D2 + k2^2 D0)
-  !   KIND_ETA     :  lambda D0 - ni (D2 - k2 D0)
-  !   KIND_POISSON :  D2 - k2 D0                       (lambda unused)
-  ! The (0,0) mode of KIND_D2V is singular and is set to zero; that of
-  ! KIND_POISSON is singular too and is left untouched for the caller.
-  subroutine solve_component(kind, lambda, field)
+  ! Assemble and solve one system per mode for fields with the layout of a
+  ! component of V (pass e.g. V(:, :, :, 2) or rhs(:, :, :, 1)); the
+  ! right-hand side comes from src and the solution goes to the interior
+  ! rows of dst (a different array):
+  !   KIND_D2V     [lambda (D2 - k2 D0) - ni (D4 - 2 k2 D2 + k2^2 D0)] x = src
+  !   KIND_ETA     [lambda D0 - ni (D2 - k2 D0)] x = src
+  !   KIND_POISSON (D2 - k2 D0) x = src                  (lambda unused)
+  !   KIND_D0      D0 x = src         the unweighted quantity behind a D0-weighted sum
+  !   KIND_DY      D0 x = D1 src      d/dy, with the ghost rows of src filled
+  ! The wrap phase uses the displacements shift_x, shift_z of the upper
+  ! image; without them, those of the current time.  The (0,0) mode of
+  ! KIND_D2V is singular and is set to zero; that of KIND_POISSON is
+  ! singular too and dst is left untouched there for the caller.
+  subroutine line_solve(kind, lambda, src, dst, shift_x, shift_z)
     integer(C_INT), intent(in) :: kind
     real(C_DOUBLE), intent(in) :: lambda
-    complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: src(ny0 - 2:, -nz:, nx0:)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
+    real(C_DOUBLE), intent(in), optional :: shift_x, shift_z
     integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
-    real(C_DOUBLE) :: shift_x, shift_z, coef
-    complex(C_DOUBLE_COMPLEX) :: ph, wrap
+    real(C_DOUBLE) :: sx, sz, coef, kk
+    complex(C_DOUBLE_COMPLEX) :: ph, wrap, b
 
-    call shear_shifts(time, shift_x, shift_z)
-    do ix0 = nx0, nxN, line_chunk
-      ix1 = min(ix0 + line_chunk - 1, nxN)
-      ncol = 2*nz + 1
+    if (present(shift_x)) then
+      sx = shift_x; sz = shift_z
+    else
+      call shear_shifts(time, sx, sz)
+    end if
+    ncol = 2*nz + 1
+    do ix0 = nx0, nxN, chunk
+      ix1 = min(ix0 + chunk - 1, nxN)
       nl = (ix1 - ix0 + 1)*ncol
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, field, der, k2, ni, lambda, kind, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
-      !$omp private(ix, iz, iy, j, il, ph, wrap, coef)
+      !$omp shared(A, X, src, der, k2, ni, lambda, kind, ix0, ix1, nz, ny, ncol, alfa0, beta0, sx, sz) &
+      !$omp private(ix, iz, iy, j, il, ph, wrap, b, coef, kk)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
+            kk = k2(iz, ix)
+            b = src(iy, iz, ix)
+            if (kind == KIND_DY) b = 0.0d0
             do j = -2, 2
-              if (kind == KIND_D2V) then
-                coef = lambda*(der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)) - &
-                       ni*(der(iy, 3, j) - 2.0d0*k2(iz, ix)*der(iy, 2, j) + k2(iz, ix)*k2(iz, ix)*der(iy, 0, j))
-              else if (kind == KIND_ETA) then
-                coef = lambda*der(iy, 0, j) - ni*(der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j))
-              else
-                coef = der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)
-              end if
+              select case (kind)
+              case (KIND_D2V)
+                coef = lambda*(der(iy, 2, j) - kk*der(iy, 0, j)) - &
+                       ni*(der(iy, 3, j) - 2.0d0*kk*der(iy, 2, j) + kk*kk*der(iy, 0, j))
+              case (KIND_ETA)
+                coef = lambda*der(iy, 0, j) - ni*(der(iy, 2, j) - kk*der(iy, 0, j))
+              case (KIND_POISSON)
+                coef = der(iy, 2, j) - kk*der(iy, 0, j)
+              case default
+                coef = der(iy, 0, j)
+                if (kind == KIND_DY) b = b + der(iy, 1, j)*src(iy + j, iz, ix)
+              end select
               wrap = 1.0d0
               if (iy + j >= ny) wrap = ph
               if (iy + j < 0) wrap = conjg(ph)
               A(il, iy, j) = coef*wrap
             end do
-            X(il, iy) = field(iy, iz, ix)
+            X(il, iy) = b
           end do
         end do
       end do
       call solve_lines(nl)
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, field, kind, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
+      !$omp shared(X, dst, kind, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
       do ix = ix0, ix1
         do iz = -nz, nz
           do iy = 0, ny - 1
             il = (iz + nz + 1) + ncol*(ix - ix0)
             if (ix == 0 .and. iz == 0 .and. kind == KIND_D2V) then
-              field(iy, iz, ix) = 0.0d0
-            else if (ix == 0 .and. iz == 0 .and. kind == KIND_POISSON) then
-              continue
-            else
-              field(iy, iz, ix) = X(il, iy)
+              dst(iy, iz, ix) = 0.0d0
+            else if (.not. (ix == 0 .and. iz == 0 .and. kind == KIND_POISSON)) then
+              dst(iy, iz, ix) = X(il, iy)
             end if
           end do
         end do
       end do
     end do
-  end subroutine solve_component
-
-  ! dst = d/dy of V(:, :, :, src):  D0 x = D1 f, with the ghost rows of src
-  ! already filled.  dst has the layout of one component of V (pass e.g.
-  ! V(:, :, :, 3) or memrhs(:, :, :, 1)); only its interior rows are written.
-  subroutine apply_dy(src, dst)
-    integer(C_INT), intent(in) :: src
-    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
-    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
-    real(C_DOUBLE) :: shift_x, shift_z
-    complex(C_DOUBLE_COMPLEX) :: ph, wrap, rhs
-
-    call shear_shifts(time, shift_x, shift_z)
-    do ix0 = nx0, nxN, line_chunk
-      ix1 = min(ix0 + line_chunk - 1, nxN)
-      ncol = 2*nz + 1
-      nl = (ix1 - ix0 + 1)*ncol
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, V, der, src, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
-      !$omp private(ix, iz, iy, j, il, ph, wrap, rhs)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-            rhs = 0.0d0
-            do j = -2, 2
-              wrap = 1.0d0
-              if (iy + j >= ny) wrap = ph
-              if (iy + j < 0) wrap = conjg(ph)
-              A(il, iy, j) = der(iy, 0, j)*wrap
-              rhs = rhs + der(iy, 1, j)*V(iy + j, iz, ix, src)
-            end do
-            X(il, iy) = rhs
-          end do
-        end do
-      end do
-      call solve_lines(nl)
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, dst, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            dst(iy, iz, ix) = X(il, iy)
-          end do
-        end do
-      end do
-    end do
-  end subroutine apply_dy
-
-  ! dst = D0^{-1} src on the interior rows: the unweighted quantity behind a
-  ! D0-weighted stencil sum.  shift_x, shift_z are the displacements of the
-  ! upper image that the wrap phase of D0 must use.  Only the interior rows
-  ! of src are read.
-  subroutine unweight_d0(src, dst, shift_x, shift_z)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: src(ny0 - 2:, -nz:, nx0:)
-    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
-    real(C_DOUBLE), intent(in) :: shift_x, shift_z
-    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
-    complex(C_DOUBLE_COMPLEX) :: ph, wrap
-
-    do ix0 = nx0, nxN, line_chunk
-      ix1 = min(ix0 + line_chunk - 1, nxN)
-      ncol = 2*nz + 1
-      nl = (ix1 - ix0 + 1)*ncol
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(A, X, src, der, ix0, ix1, nz, ny, ncol, alfa0, beta0, shift_x, shift_z) &
-      !$omp private(ix, iz, iy, j, il, ph, wrap)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-            do j = -2, 2
-              wrap = 1.0d0
-              if (iy + j >= ny) wrap = ph
-              if (iy + j < 0) wrap = conjg(ph)
-              A(il, iy, j) = der(iy, 0, j)*wrap
-            end do
-            X(il, iy) = src(iy, iz, ix)
-          end do
-        end do
-      end do
-      call solve_lines(nl)
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, dst, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            dst(iy, iz, ix) = X(il, iy)
-          end do
-        end do
-      end do
-    end do
-  end subroutine unweight_d0
+  end subroutine line_solve
 
 end module hst_linsolve

@@ -37,13 +37,13 @@ contains
 
     allocate (V(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN, 1:3)); V = 0
     allocate (oldrhs(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN, 1:2)); oldrhs = 0
-    allocate (memrhs(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN, 1:2)); memrhs = 0
-    !$omp target enter data map(to: V, oldrhs, memrhs)
+    allocate (rhs(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN, 1:2)); rhs = 0
+    !$omp target enter data map(to: V, oldrhs, rhs)
   end subroutine allocate_fields
 
   subroutine free_fields()
-    !$omp target exit data map(delete: V, oldrhs, memrhs, y, dyl, fy, inlayer, izd, ialfa, ibeta, k2, RK_rai)
-    deallocate (V, oldrhs, memrhs, y, dyl, fy, inlayer, izd, ialfa, ibeta, k2)
+    !$omp target exit data map(delete: V, oldrhs, rhs, y, dyl, fy, inlayer, izd, ialfa, ibeta, k2, RK_rai)
+    deallocate (V, oldrhs, rhs, y, dyl, fy, inlayer, izd, ialfa, ibeta, k2)
   end subroutine free_fields
 
   ! xi in [0, 1) -> [0, 1): uniform for ystretch = 0, else the two-sided
