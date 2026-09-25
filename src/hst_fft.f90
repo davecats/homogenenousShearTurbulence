@@ -50,6 +50,10 @@ module hst_fft
 #endif
 #ifdef HAVE_CUDA
   integer, save :: cu_pFFT, cu_pIFT, cu_pRFT, cu_pHFT
+  ! One work area for the four plans (they never run at the same time):
+  ! cuFFT would otherwise give each plan its own, about the size of the
+  ! data it transforms, which at 512^3 on one GPU is more than the fields.
+  integer(1), device, allocatable, save :: work(:)
   ! The CUDA stream the OpenMP target regions run on (NVHPC extension).
   ! The cuFFT plans are put on it, so transforms and kernels are ordered
   ! by the stream and no host synchronisation is needed between them.
@@ -72,6 +76,7 @@ contains
 #ifdef HAVE_CUDA
     integer, dimension(1) :: n, inembed, onembed
     integer(kind=cuda_stream_kind) :: stream
+    integer(C_SIZE_T) :: ws(4)
 #endif
     fft_y0 = ny0 - 2
     fft_yN = nyN + 2
@@ -95,17 +100,27 @@ contains
     istat = 0
 #endif
 #ifdef HAVE_CUDA
-    istat = cufftPlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3)
-    call check(istat, 'cufftPlan1d IFT')
-    istat = cufftPlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3)
-    call check(istat, 'cufftPlan1d FFT')
     n(1) = 2*nxd
     inembed(1) = nxd + 1
     onembed(1) = 2*(nxd + 1)
-    istat = cufftPlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny*3)
-    call check(istat, 'cufftPlanMany RFT')
-    istat = cufftPlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny*3)
-    call check(istat, 'cufftPlanMany HFT')
+    istat = cufftCreate(cu_pIFT); istat = cufftSetAutoAllocation(cu_pIFT, 0)
+    istat = cufftMakePlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3, ws(1))
+    call check(istat, 'cufftMakePlan1d IFT')
+    istat = cufftCreate(cu_pFFT); istat = cufftSetAutoAllocation(cu_pFFT, 0)
+    istat = cufftMakePlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3, ws(2))
+    call check(istat, 'cufftMakePlan1d FFT')
+    istat = cufftCreate(cu_pRFT); istat = cufftSetAutoAllocation(cu_pRFT, 0)
+    istat = cufftMakePlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny*3, ws(3))
+    call check(istat, 'cufftMakePlanMany RFT')
+    istat = cufftCreate(cu_pHFT); istat = cufftSetAutoAllocation(cu_pHFT, 0)
+    istat = cufftMakePlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny*3, ws(4))
+    call check(istat, 'cufftMakePlanMany HFT')
+    allocate (work(max(maxval(ws), 1_C_SIZE_T)))
+    istat = cufftSetWorkArea(cu_pIFT, work); call check(istat, 'cufftSetWorkArea IFT')
+    istat = cufftSetWorkArea(cu_pFFT, work); call check(istat, 'cufftSetWorkArea FFT')
+    istat = cufftSetWorkArea(cu_pRFT, work); call check(istat, 'cufftSetWorkArea RFT')
+    istat = cufftSetWorkArea(cu_pHFT, work); call check(istat, 'cufftSetWorkArea HFT')
+    if (has_terminal) write (*, '(A,F8.1,A)') '   cuFFT work area: ', maxval(ws)/1024.0d0**2, ' MB per rank'
     stream = transfer(ompx_get_cuda_stream(int(omp_get_default_device(), C_INT), 0_C_INT), stream)
     istat = cufftSetStream(cu_pFFT, stream); call check(istat, 'cufftSetStream FFT')
     istat = cufftSetStream(cu_pIFT, stream); call check(istat, 'cufftSetStream IFT')
@@ -124,6 +139,7 @@ contains
 #ifdef HAVE_CUDA
     istat = cufftDestroy(cu_pFFT); istat = cufftDestroy(cu_pIFT)
     istat = cufftDestroy(cu_pRFT); istat = cufftDestroy(cu_pHFT)
+    deallocate (work)
 #endif
     !$omp target exit data map(delete: VVdz, VVdx, VVdp)
     nullify (rVVdx, products)

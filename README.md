@@ -135,12 +135,20 @@ production = dissipation (FINDINGS.md).
 
 ## Performance
 
-Seconds per full time step (three substeps), `examples/bench_*.in`:
+Seconds per full time step (three substeps), `examples/bench_*.in`, after
+the performance pass of FINDINGS.md (the numbers in brackets are those of
+the code before it):
 
-| grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 |
-| --- | --- | --- | --- |
-| 256 x 256 x 256 | 0.33 | 0.145 | 1.33 |
-| 512 x 512 x 512 | | 0.99 | |
+| grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
+| --- | --- | --- | --- | --- |
+| 64 x 128 x 64 | 0.019 (0.054) | | 0.17 (0.18) | 0.89 (1.03) |
+| 256 x 256 x 256 | 0.115 (0.334) | 0.101 (0.140) | 1.25 (1.33) | |
+| 512 x 512 x 512 | see FINDINGS.md (1.99) | 0.80 (0.98) | | |
+
+The RTX 3060 runs double precision at 1/64 rate, so it gains little from
+what helps the A100; `timing = .true.` prints where the time goes.  Four
+A100 at 256^3 are limited by the alltoall (transposes are 85% of the
+step), so a second node buys nothing before WP6.
 
 ## Status
 
