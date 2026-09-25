@@ -41,6 +41,7 @@ module hst_io
   public :: restart_read, restart_write, field_write, make_output_dirs
 
   character, parameter :: LF = achar(10), TAB = achar(9)
+  integer, parameter :: CPL_ORDER(3) = [1, 3, 2]     ! our component behind CPL's (u, v, w)
 
 contains
 
@@ -110,9 +111,7 @@ contains
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = 0, ny - 1
-          V(iy, iz, ix, 1) = buf(1, iy, iz, ix)
-          V(iy, iz, ix, 3) = buf(2, iy, iz, ix)
-          V(iy, iz, ix, 2) = buf(3, iy, iz, ix)
+          V(iy, iz, ix, CPL_ORDER) = buf(:, iy, iz, ix)
         end do
       end do
     end do
@@ -140,16 +139,13 @@ contains
   ! device first.
   subroutine restart_write(filename)
     character(len=*), intent(in) :: filename
-    type(MPI_File) :: fh
-    type(MPI_Status) :: status
-    integer :: ierr, hlen
-    integer(MPI_OFFSET_KIND) :: disp
-    character(len=1024) :: head
+    character(len=:), allocatable :: head
     complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :, :)
-    integer(C_INT) :: ix, iy, iz, jy
+    integer(C_INT) :: ix, iy, iz
 
-    ! header, built on the terminal rank and written by it
-    if (has_terminal) then
+    ! header, built on the terminal rank (raw8 puts binary bytes in it: no trim)
+    head = ''
+    if (has_terminal) &
       head = 'nx='//str_i(nx)//' '//TAB//'ny='//str_i(nz)//' '//TAB//'nz='//str_i(ny + 1)// &
              ' '//TAB//'alpha0='//str_r(alfa0)//' '//TAB//'beta0='//str_r(beta0)// &
              ' '//TAB//'htcoeff='//str_r(merge(ystretch, -1.0d0, ystretch > 0.0d0))//' '//TAB//'Re='//str_r(re)//' '//TAB//'Pr=0.71'//LF// &
@@ -159,30 +155,16 @@ contains
              'meanpx=0 '//TAB//'meanflowx=0 '//TAB//'meanpy=0 '//TAB//'meanflowy=0'//LF// &
              'time='//LF//raw8(time)//LF//'S='//LF//raw8(S)//LF//'S2='//LF//raw8(s2_of(time))//LF// &
              'gamma_x='//LF//raw8(S*time)//LF//'gamma_y='//LF//raw8(gamma_y_of(time))//LF//'Vfield='//LF
-      hlen = index(head, 'Vfield='//LF) + 7
-    end if
-    call MPI_Bcast(hlen, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
-    disp = hlen
-
     ! this rank's slab in CPL order, with periodic ghost rows
     allocate (buf(3, ny0 - 2:nyN + 2, -nz:nz, nx0:nxN))
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = -2, ny + 1
-          jy = modulo(iy, ny)
-          buf(1, iy, iz, ix) = V(jy, iz, ix, 1)
-          buf(2, iy, iz, ix) = V(jy, iz, ix, 3)
-          buf(3, iy, iz, ix) = V(jy, iz, ix, 2)
+          buf(:, iy, iz, ix) = V(modulo(iy, ny), iz, ix, CPL_ORDER)
         end do
       end do
     end do
-
-    call MPI_File_open(MPI_COMM_WORLD, trim(filename), ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), MPI_INFO_NULL, fh, ierr)
-    call MPI_File_set_size(fh, 0_MPI_OFFSET_KIND, ierr)
-    if (has_terminal) call MPI_File_write(fh, head(1:hlen), hlen, MPI_CHARACTER, status, ierr)
-    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, cpl_view_type, 'native', MPI_INFO_NULL, ierr)
-    call MPI_File_write_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, status, ierr)
-    call MPI_File_close(fh, ierr)
+    call write_cpl(filename, head, buf, size(buf), cpl_view_type)
     deallocate (buf)
   end subroutine restart_write
 
@@ -191,9 +173,6 @@ contains
   subroutine field_write(filename, field)
     character(len=*), intent(in) :: filename
     complex(C_DOUBLE_COMPLEX), intent(in) :: field(ny0 - 2:, -nz:, nx0:)
-    type(MPI_File) :: fh
-    type(MPI_Status) :: status
-    integer :: ierr
     complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :)
     integer(C_INT) :: ix, iy, iz
 
@@ -205,13 +184,32 @@ contains
         end do
       end do
     end do
-    call MPI_File_open(MPI_COMM_WORLD, trim(filename), ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), MPI_INFO_NULL, fh, ierr)
-    call MPI_File_set_size(fh, 0_MPI_OFFSET_KIND, ierr)
-    call MPI_File_set_view(fh, 0_MPI_OFFSET_KIND, MPI_DOUBLE_COMPLEX, cpl_pview_type, 'native', MPI_INFO_NULL, ierr)
-    call MPI_File_write_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, status, ierr)
-    call MPI_File_close(fh, ierr)
+    call write_cpl(filename, '', buf, size(buf), cpl_pview_type)
     deallocate (buf)
   end subroutine field_write
+
+  ! Creates filename, writes the header (built on the terminal rank; empty
+  ! for none) and then the n values of buf collectively through view.
+  subroutine write_cpl(filename, head, buf, n, view)
+    character(len=*), intent(in) :: filename, head
+    complex(C_DOUBLE_COMPLEX), intent(in) :: buf(*)
+    integer, intent(in) :: n
+    type(MPI_Datatype), intent(in) :: view
+    type(MPI_File) :: fh
+    type(MPI_Status) :: status
+    integer :: ierr, hlen
+    integer(MPI_OFFSET_KIND) :: disp
+
+    hlen = len(head)
+    call MPI_Bcast(hlen, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, ierr)
+    disp = hlen
+    call MPI_File_open(MPI_COMM_WORLD, trim(filename), ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), MPI_INFO_NULL, fh, ierr)
+    call MPI_File_set_size(fh, 0_MPI_OFFSET_KIND, ierr)
+    if (has_terminal .and. hlen > 0) call MPI_File_write(fh, head, hlen, MPI_CHARACTER, status, ierr)
+    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
+    call MPI_File_write_all(fh, buf, n, MPI_DOUBLE_COMPLEX, status, ierr)
+    call MPI_File_close(fh, ierr)
+  end subroutine write_cpl
 
   function str_i(i) result(s)
     integer(C_INT), intent(in) :: i
