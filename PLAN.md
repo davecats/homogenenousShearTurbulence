@@ -484,17 +484,25 @@ With shear on, the error is 1.4e-3 at ny = 64 and 3.6e-4 at ny = 128 for a
 tilt of ky from pi to 1.05 -- second order in dy, independent of the time
 step and of viscosity.  The stencils themselves are sixth-order (modified
 wavenumber error 4e-7 at ny = 64).  The cause is the exact-advection step
-of 3.2: the unknowns are D0-weighted stencil sums, and multiplying such a
-sum by the node phase exp(-i kx S y(iy) dt) is not the stencil of the
-shifted field.  The difference is the variation of the D0 symbol,
-delta0(ky) ~ 1 - 0.172 (ky dy)^2, between the tilts, which predicts
-0.172 dy^2 (ky0^2 - ky(t)^2) = 1.47e-3 at ny = 64.  `S1data.cpl` shifts
-its D0-weighted right-hand sides in the same way, so this is a property
-of the reference method, kept deliberately.  A possible refinement, not
-done: apply the phase inside the stencils to the terms that are rebuilt
-from V each substep (the unknown, the viscous explicit half, the tilting
-term and the products), which leaves only the carried explicit term with
-the second-order shift.
+of 3.2.  The stored unknown is the D0-weighted Laplacian,
+d2v(i) = sum_j d0_j (lap v)(y_{i+j}); for a mode exp(i ky y) that is the
+Laplacian times the D0 symbol delta0(ky) = sum_j d0_j exp(i ky j dy)
+= 1 - (1/6)(ky dy)^2 + ...  Multiplying the stored unknown by the node
+phase exp(-i kx S y_i dt) tilts the mode to ky' but keeps the weight
+delta0(ky) of the old wavenumber, and the solve at the new time divides by
+delta0(ky').  Per substep the amplitude is off by delta0(ky)/delta0(ky');
+the product over substeps telescopes to delta0(ky0)/delta0(ky(t)), so the
+accumulated relative error is (1/6) dy^2 (ky0^2 - ky(t)^2): 1.43e-3 at
+ny = 64 against 1.43e-3 measured, independent of dt and of nu, and
+proportional to dy^2.  `S1data.cpl` shifts its D0-weighted right-hand
+sides in the same way, so this is a property of the reference method,
+kept deliberately.  The exact treatment would advect the unweighted
+Laplacian: d2v_new(i) = sum_j d0_j (lap v)(y_{i+j}) exp(-i kx S y_{i+j} dt),
+i.e. unweight with a D0 solve, apply the node phase, re-weight with D0, for
+each shifted quantity (the two right-hand sides and the two carried
+explicit terms): four extra line solves per substep, a local change to
+shear_shift.  Applying the phase inside the stencil to v itself would be
+wrong (it advects v instead of lap v and loses the Kelvin amplification).
 
 **Energy budget of isotropic decay (S = 0).**  On the deliberately coarse
 16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
