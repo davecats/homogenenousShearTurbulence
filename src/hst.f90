@@ -43,8 +43,9 @@ program hst
   call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
   call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
   has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
   call select_device()
+#ifdef HAVE_CUDA
+  print '(A,I4,A,I2,A,I2)', ' rank', iproc, ' uses device', omp_get_default_device(), ' of', omp_get_num_devices()
 #endif
 
   !------------------------------------------------------------ set-up ----
@@ -137,30 +138,5 @@ contains
     if (dt_fixed > 0.0d0) deltat = min(deltat, dt_fixed)
     if (dt_fixed > 0.0d0 .and. cflmax <= 0.0d0) deltat = dt_fixed
   end subroutine new_timestep
-
-#ifdef HAVE_CUDA
-  ! One GPU per rank: node-local rank modulo the number of devices.  The
-  ! node-local rank comes from the launcher (OpenMPI or SLURM); without it
-  ! the global rank is used, which is right on a single node.
-  subroutine select_device()
-    integer :: num_dev, dev, local_rank, length, status
-    character(len=32) :: text
-    num_dev = omp_get_num_devices()
-    if (num_dev < 1) then
-      print *, 'ERROR: rank', iproc, 'sees no OpenMP target device'
-      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
-    end if
-    local_rank = iproc
-    call get_environment_variable('OMPI_COMM_WORLD_LOCAL_RANK', text, length, status)
-    if (status /= 0) call get_environment_variable('SLURM_LOCALID', text, length, status)
-    if (status == 0 .and. length > 0) read (text, *) local_rank
-    dev = mod(local_rank, num_dev)
-    call omp_set_default_device(dev)
-    print '(A,I4,A,I4,A,I2,A,I2)', ' rank', iproc, ' local rank', local_rank, ' uses device', dev, ' of', num_dev
-    !$omp target
-    if (omp_is_initial_device()) print *, 'WARNING: target region ran on the host'
-    !$omp end target
-  end subroutine select_device
-#endif
 
 end program hst

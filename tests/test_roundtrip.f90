@@ -14,6 +14,7 @@ program test_roundtrip
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -21,31 +22,15 @@ program test_roundtrip
   use hst_transforms
   use hst_initial
   use hst_io
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, m, i, j, k, y_first, y_last
   complex(C_DOUBLE_COMPLEX), allocatable :: V0(:, :, :, :), W(:, :, :)
   real(C_DOUBLE) :: err, err_global, vmax, tol, worst
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
+  call test_start()
+  call test_setup()
 
   ! A random field with plain periodic ghost rows (gamma = 0 at time zero).
   call generate_initial_field()
@@ -96,14 +81,6 @@ program test_roundtrip
   if (has_terminal) write (*, '(A,F10.4)') '   rank-0 cfl estimate ', cfl
 
   !$omp target exit data map(delete: W)
-  call free_fft()
-  call free_fields()
-  call free_mpi()
-  call MPI_Finalize(ierr)
-  if (worst > tol) then
-    if (has_terminal) print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(worst <= tol)
 
 end program test_roundtrip

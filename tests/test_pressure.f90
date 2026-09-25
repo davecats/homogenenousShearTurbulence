@@ -15,6 +15,7 @@ program test_pressure
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -22,13 +23,9 @@ program test_pressure
   use hst_derivatives
   use hst_linsolve
   use hst_pressure
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, iy, ix, iz, m
   real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
   complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
@@ -36,24 +33,11 @@ program test_pressure
   real(C_DOUBLE) :: k, ky, err, err_other, pex, err_global
   complex(C_DOUBLE_COMPLEX) :: ep, em
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   S = 0.0d0; time = 0.0d0
   if (nx < 2*mx) error stop 'test_pressure needs nx >= 6'
   if (abs(mx*alfa0 - 2.0d0*PI*my/ly) > 1.0d-12) error stop 'test_pressure needs kx = ky: alfa0 = 2pi/3, ly = 2'
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
 
   ! cos(kx) sin(ky) = (e^{ikx} + e^{-ikx})/2 * sin(ky): stored mode ix = mx
   ! with coefficient 1/2 (the -mx partner is implied by Hermitian symmetry);
@@ -97,12 +81,6 @@ program test_pressure
     write (*, '(A,ES10.2)') '   Taylor-Green pressure: max error in the two nonzero modes ', err
     write (*, '(A,ES10.2)') '                          max magnitude of all other modes    ', err_other
   end if
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (err > 1.0d-4 .or. err_other > 1.0d-10) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(err <= 1.0d-4 .and. err_other <= 1.0d-10)
 
 end program test_pressure

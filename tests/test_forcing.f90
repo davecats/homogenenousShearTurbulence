@@ -16,6 +16,7 @@ program test_forcing
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -24,13 +25,9 @@ program test_forcing
   use hst_linsolve
   use hst_transforms
   use hst_equations
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, iy, m
   real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
   complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
@@ -38,24 +35,11 @@ program test_forcing
   real(C_DOUBLE) :: k, ky, err, errv, ref
   complex(C_DOUBLE_COMPLEX) :: eta0, eta1, expected
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   S = 0.0d0; linear = .false.; ni = 1.0d-12; time = 0.0d0
   if (nproc /= 1) error stop 'test_forcing runs on one rank'
   if (abs(mx*alfa0 - 2.0d0*PI*my/ly) > 1.0d-12) error stop 'test_forcing needs alfa0 = 2pi/3, ly = 2'
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
 
   k = mx*alfa0; ky = k
   V = 0
@@ -84,12 +68,6 @@ program test_forcing
     write (*, '(A,ES10.2,A,ES10.2,A,ES10.2)') '   eta forcing: change ', ref, '  error ', err, '  relative ', err/ref
     write (*, '(A,ES10.2)') '   v (must stay zero): ', errv
   end if
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (err/ref > 1.0d-2 .or. errv > 1.0d-8) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(err/ref <= 1.0d-2 .and. errv <= 1.0d-8)
 
 end program test_forcing

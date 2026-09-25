@@ -11,34 +11,21 @@ program test_linsolve
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_linsolve
   use hst_initial, only: uniform_from_key
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, il, iy, j, c, nl
   complex(C_DOUBLE_COMPLEX), allocatable :: xtrue(:, :), Aref(:, :, :)
   complex(C_DOUBLE_COMPLEX) :: ph, b
   real(C_DOUBLE) :: err, xmax, r1, r2
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
-  call setup_decomposition()
-  call init_linsolve()
+  call test_start()
+  call test_setup()
 
   nl = min(nlines_max, 37)
   allocate (xtrue(nl, 0:ny - 1), Aref(nl, 0:ny - 1, -2:2))
@@ -76,13 +63,6 @@ program test_linsolve
   xmax = maxval(abs(xtrue))
   if (has_terminal) write (*, '(A,I0,A,I0,A,ES10.2,A,ES10.2)') '   cyclic pentadiagonal solve, ', nl, &
     ' lines of ', ny, ': max error ', err, '  (max |x| = ', xmax, ')'
-  call free_linsolve()
-  call free_mpi()
-  call MPI_Finalize(ierr)
-  if (err > 1.0d-12*xmax) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(err <= 1.0d-12*xmax)
 
 end program test_linsolve

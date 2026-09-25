@@ -15,6 +15,7 @@ program test_conservation
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -24,33 +25,16 @@ program test_conservation
   use hst_transforms
   use hst_equations
   use hst_initial
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, mask, i, m, j, kk, ii, y_first, y_last
   real(C_DOUBLE) :: q0, q1, rate(0:6), dt_sub
   character(len=2), parameter :: name(6) = ['uu', 'vv', 'ww', 'uv', 'vw', 'uw']
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   S = 0.0d0; linear = .false.; ni = 1.0d-12
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
   y_first = ny0 - 2
   y_last = nyN + 2
 
@@ -104,13 +88,7 @@ program test_conservation
   end do
   if (has_terminal) write (*, '(A,ES11.3)') '   uv + vw + uw : (dq2/dt)/q2 = ', rate(4) + rate(5) + rate(6)
 
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (maxval(abs(rate(0:3))) > 1.0d-2 .or. abs(rate(4) + rate(5) + rate(6)) > 1.0d-2) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(maxval(abs(rate(0:3))) <= 1.0d-2 .and. abs(rate(4) + rate(5) + rate(6)) <= 1.0d-2)
 
 contains
 

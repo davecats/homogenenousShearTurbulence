@@ -24,6 +24,7 @@ program test_kelvin
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -31,13 +32,9 @@ program test_kelvin
   use hst_derivatives
   use hst_linsolve
   use hst_equations
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, iy, m, n, iq
   real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
   complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
@@ -48,24 +45,11 @@ program test_kelvin
   complex(C_DOUBLE_COMPLEX) :: vex, etaex, u0, w0, ph
   logical :: check_eta
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   linear = .true.
   time = 0.0d0
   if (nproc /= 1) error stop 'test_kelvin runs on one rank'
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
 
   ! The mode at t = 0: v = v0 e^{i ky0 y}, u and w from continuity and eta0.
   kx = alfa0*ix; kz = beta0*iz; ky0 = 2.0d0*PI*mky/ly
@@ -132,12 +116,6 @@ program test_kelvin
       write (*, '(A)') '   (eta not checked: no closed form for time-dependent S2)'
     end if
   end if
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (err_v/abs(vex) > 1.0d-3 .or. (check_eta .and. err_eta/abs(etaex) > 1.0d-3)) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(err_v/abs(vex) <= 1.0d-3 .and. (.not. check_eta .or. err_eta/abs(etaex) <= 1.0d-3))
 
 end program test_kelvin

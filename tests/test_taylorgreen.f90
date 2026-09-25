@@ -18,6 +18,7 @@ program test_taylorgreen
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -26,13 +27,9 @@ program test_taylorgreen
   use hst_linsolve
   use hst_transforms
   use hst_equations
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, iy, ix, iz, m, n, orient
   real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
   complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
@@ -40,25 +37,12 @@ program test_taylorgreen
   real(C_DOUBLE) :: k, ky, decay, err, err_global, worst
   complex(C_DOUBLE_COMPLEX) :: ex
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   S = 0.0d0; linear = .false.
   if (nx < 2*mx) error stop 'test_taylorgreen needs nx >= 6'
   if (abs(mx*alfa0 - 2.0d0*PI*my/ly) > 1.0d-12 .or. abs(mz*beta0 - 2.0d0*PI*my/ly) > 1.0d-12) &
     error stop 'test_taylorgreen needs alfa0 = 2pi/3, beta0 = 2pi, ly = 2'
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
   if (dt_fixed <= 0.0d0) dt_fixed = 1.0d-3
   n = 20
   worst = 0.0d0
@@ -117,12 +101,6 @@ program test_taylorgreen
       ': after ', n, ' steps max error ', err_global, '  relative ', err_global/(0.5d0*decay)
   end do
 
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (worst > 1.0d-4) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(worst <= 1.0d-4)
 
 end program test_taylorgreen

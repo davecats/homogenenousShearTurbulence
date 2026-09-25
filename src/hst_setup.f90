@@ -1,14 +1,43 @@
-! Allocating the grid arrays and the fields, and mapping them to the device.
+! Allocating the grid arrays and the fields, and mapping them to the device;
+! choosing the device.
 module hst_setup
 
   use, intrinsic :: iso_c_binding
   use hst_params
+#ifdef HAVE_CUDA
+  use mpi_f08, only: MPI_Abort, MPI_COMM_WORLD
+  use omp_lib
+#endif
 
   implicit none
   private
-  public :: allocate_fields, free_fields
+  public :: allocate_fields, free_fields, select_device
 
 contains
+
+  ! One GPU per rank: node-local rank modulo the number of devices.  The
+  ! node-local rank comes from the launcher (OpenMPI or SLURM); without it
+  ! the global rank is used, which is right on a single node.  Nothing to
+  ! do in a CPU build.
+  subroutine select_device()
+#ifdef HAVE_CUDA
+    integer :: num_dev, local_rank, length, status, ierr
+    character(len=32) :: text
+    num_dev = omp_get_num_devices()
+    if (num_dev < 1) then
+      print *, 'ERROR: rank', iproc, 'sees no OpenMP target device'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    local_rank = iproc
+    call get_environment_variable('OMPI_COMM_WORLD_LOCAL_RANK', text, length, status)
+    if (status /= 0) call get_environment_variable('SLURM_LOCALID', text, length, status)
+    if (status == 0 .and. length > 0) read (text, *) local_rank
+    call omp_set_default_device(mod(local_rank, num_dev))
+    !$omp target
+    if (omp_is_initial_device()) print *, 'WARNING: target region ran on the host'
+    !$omp end target
+#endif
+  end subroutine select_device
 
   subroutine allocate_fields()
     integer(C_INT) :: ix, iy, iz

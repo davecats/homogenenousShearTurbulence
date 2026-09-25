@@ -3,7 +3,7 @@
 #   make            CPU build: gfortran (mpifort) + FFTW     -> build-cpu/hst
 #   make GPU=1      GPU build: nvfortran (NVHPC mpif90) + cuFFT, OpenMP offload
 #                                                            -> build-gpu/hst
-#   make test       also build the test programs (tests/*.f90) into the build dir
+#   make test       also build the test programs (tests/*.f90, on tests/test_common.f90) into the build dir
 #   make clean
 #
 # Source `env/istm.sh` or `env/horeka.sh` first so the right compilers are on
@@ -62,6 +62,7 @@ else
 endif
 
 OBJ     = $(patsubst src/%.f90,$(BUILD)/%.o,$(SRC))
+TESTOBJ = $(BUILD)/test_common.o
 EXE     = $(BUILD)/hst
 TESTEXE = $(patsubst tests/%.f90,$(BUILD)/%,$(TESTS))
 
@@ -74,8 +75,8 @@ test: $(TESTEXE)
 $(EXE): $(OBJ) $(BUILD)/hst.o
 	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/hst.o $(LIBS)
 
-$(BUILD)/%: $(OBJ) $(BUILD)/%.o
-	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/$*.o $(LIBS)
+$(BUILD)/%: $(OBJ) $(TESTOBJ) $(BUILD)/%.o
+	$(FC) $(FFLAGS) -o $@ $(OBJ) $(TESTOBJ) $(BUILD)/$*.o $(LIBS)
 
 $(BUILD)/%.o: src/%.f90 | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
@@ -101,14 +102,8 @@ $(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BU
 $(BUILD)/hst_stats.o:      $(BUILD)/hst_params.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_stokes.o
 $(BUILD)/hst_pressure.o:   $(BUILD)/hst_params.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_io.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst.o:            $(OBJ)
-$(BUILD)/test_roundtrip.o: $(OBJ)
-$(BUILD)/test_linsolve.o:  $(OBJ)
-$(BUILD)/test_kelvin.o:    $(OBJ)
-$(BUILD)/test_pressure.o:  $(OBJ)
-$(BUILD)/test_taylorgreen.o: $(OBJ)
-$(BUILD)/test_forcing.o:   $(OBJ)
-$(BUILD)/test_conservation.o: $(OBJ)
-$(BUILD)/test_stokes.o:    $(OBJ)
+$(TESTOBJ):                $(OBJ)
+$(patsubst tests/%.f90,$(BUILD)/%.o,$(TESTS)): $(OBJ) $(TESTOBJ)
 
 clean:
 	rm -rf build-cpu build-gpu

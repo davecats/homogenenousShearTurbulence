@@ -14,6 +14,7 @@ program test_stokes
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use test_common
   use hst_input
   use hst_mpi
   use hst_fft
@@ -23,33 +24,16 @@ program test_stokes
   use hst_equations
   use hst_stokes
   use hst_io
-#ifdef HAVE_CUDA
-  use omp_lib
-#endif
 
   implicit none
 
-  character(len=256) :: deck
   integer :: ierr, iy, m, n
   real(C_DOUBLE) :: err, wmax, other, err_g, other_g, wmax_g, wex
 
-  call MPI_Init(ierr)
-  call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
-  call MPI_Comm_size(MPI_COMM_WORLD, nproc, ierr)
-  has_terminal = (iproc == 0)
-#ifdef HAVE_CUDA
-  call omp_set_default_device(mod(iproc, omp_get_num_devices()))
-#endif
-  deck = 'hst.in'
-  if (command_argument_count() >= 1) call get_command_argument(1, deck)
-  call read_input(trim(deck))
+  call test_start()
   if (sl_amplitude == 0.0d0) error stop 'test_stokes needs a deck with sl_amplitude /= 0'
   time = 0.0d0
-  call setup_decomposition()
-  call allocate_fields()
-  call init_fft()
-  call init_linsolve()
-  call setup_derivatives()
+  call test_setup()
   V = 0
   !$omp target update to(V)
   call stokes_setup()
@@ -88,12 +72,6 @@ program test_stokes
       ')  relative ', err_g/wmax
     write (*, '(A,ES10.2)') '   everything else (must be zero): ', other_g
   end if
-  call free_linsolve(); call free_fft(); call free_fields(); call free_mpi()
-  call MPI_Finalize(ierr)
-  if (err_g/wmax > 1.0d-4 .or. other_g > 1.0d-12) then
-    print *, 'FAILED'
-    error stop 1
-  end if
-  if (has_terminal) print *, 'PASSED'
+  call test_finish(err_g/wmax <= 1.0d-4 .and. other_g <= 1.0d-12)
 
 end program test_stokes
