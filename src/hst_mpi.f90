@@ -23,10 +23,12 @@ module hst_mpi
   use mpi_f08
   use hst_params
   use hst_timer, only: toc, T_PACK, T_ALLTOALL
-#ifdef HAVE_NCCL
+#ifdef HAVE_CUDA
   use hst_fft, only: target_stream
+  use cudafor
+#endif
+#ifdef HAVE_NCCL
   use omp_lib, only: omp_get_num_devices, omp_get_default_device
-  use cudafor, only: cudaSetDevice
 #endif
 
   implicit none
@@ -40,6 +42,7 @@ module hst_mpi
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
   logical, save :: use_nccl = .false.
+  integer(C_INT), parameter :: TILE = 32, ROWS_PER_THREAD = 4   ! transpose_tiled: tile edge, rows per thread
 
 #ifdef HAVE_NCCL
   ! NCCL through its C prototypes (nccl.h).  The Fortran module of NVHPC
@@ -199,44 +202,14 @@ contains
   !------------------------------------------------------------------------
   ! z-pencil Vz(iz, ix, iy, m)  <->  x-pencil Vx(ix, iz, iy, m), m = 1..3
   !------------------------------------------------------------------------
-
-  subroutine repack_zTOx_local(Vz, Vx)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
-    integer(C_SIZE_T) :: iy, ix, iz, m
-    integer(C_INT) :: ny_batch, nb
-    ny_batch = size(Vz, 3); nb = size(Vz, 4)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vz, Vx, ny_batch, nb, nxB, nzd) private(iy, ix, iz, m)
-    do m = 1, nb
-      do iy = 1, ny_batch
-        do ix = 1, nxB
-          do iz = 1, nzd
-            Vx(ix, iz, iy, m) = Vz(iz, ix, iy, m)
-          end do
-        end do
-      end do
-    end do
-  end subroutine repack_zTOx_local
-
-  subroutine repack_xTOz_local(Vx, Vz)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
-    integer(C_SIZE_T) :: iy, ix, iz, m
-    integer(C_INT) :: ny_batch, nb
-    ny_batch = size(Vx, 3); nb = size(Vx, 4)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vx, Vz, ny_batch, nb, nxB, nzd) private(iy, ix, iz, m)
-    do m = 1, nb
-      do iy = 1, ny_batch
-        do iz = 1, nzd
-          do ix = 1, nxB
-            Vz(iz, ix, iy, m) = Vx(ix, iz, iy, m)
-          end do
-        end do
-      end do
-    end do
-  end subroutine repack_xTOz_local
+  ! The send buffer is a copy: block dest holds Vz(dest*nzB + iz, ix, iy, m)
+  ! (or Vx(dest*nxB + ix, iz, iy, m)) with the leading index still leading,
+  ! so both sides of the pack run contiguously and it moves at the memory
+  ! bandwidth.  The receive buffer holds the same blocks from every source,
+  ! and taking them apart into the other pencil layout is where the leading
+  ! index changes: that is the tiled transpose below, which also serves the
+  ! one-rank case, where the two layouts are converted in place of the
+  ! alltoall.
 
   subroutine pack_zTOx(Vz, send)
     complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
@@ -260,28 +233,6 @@ contains
     end do
   end subroutine pack_zTOx
 
-  subroutine unpack_zTOx(recv, Vx)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
-    integer(C_SIZE_T) :: iy, ix, iz, m, src, p
-    integer(C_INT) :: ny_batch, nb
-    ny_batch = size(Vx, 3); nb = size(Vx, 4)
-    !$omp target teams distribute parallel do collapse(5) default(none) &
-    !$omp shared(Vx, recv, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, src, p)
-    do src = 0, npxz - 1
-      do m = 1, nb
-        do iy = 1, ny_batch
-          do ix = 1, nxB
-            do iz = 1, nzB
-              p = src*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1) + nzB*nxB*ny_batch*(m - 1)
-              Vx(ix + src*nxB, iz, iy, m) = recv(p)
-            end do
-          end do
-        end do
-      end do
-    end do
-  end subroutine unpack_zTOx
-
   subroutine pack_xTOz(Vx, send)
     complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
     complex(C_DOUBLE_COMPLEX), intent(out) :: send(:)
@@ -304,27 +255,74 @@ contains
     end do
   end subroutine pack_xTOz
 
-  subroutine unpack_xTOz(recv, Vz)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
-    integer(C_SIZE_T) :: iy, ix, iz, m, src, p
-    integer(C_INT) :: ny_batch, nb
-    ny_batch = size(Vz, 3); nb = size(Vz, 4)
-    !$omp target teams distribute parallel do collapse(5) default(none) &
-    !$omp shared(Vz, recv, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, src, p)
-    do src = 0, npxz - 1
-      do m = 1, nb
-        do iy = 1, ny_batch
-          do iz = 1, nzB
-            do ix = 1, nxB
-              p = src*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1) + nxB*nzB*ny_batch*(m - 1)
-              Vz(iz + src*nzB, ix, iy, m) = recv(p)
-            end do
+  ! B(jb*(block - 1) + j, i, plane) = A(i, j, plane, block): the leading
+  ! index of A (i, contiguous) becomes the second index of B, for every
+  ! plane (one y row of one field) and, for the receive buffer, every block
+  ! (one source rank, whose modes start at jb*(block - 1) in B).  On the GPU
+  ! each thread block moves one TILE x TILE tile through shared memory,
+  ! reading A along i and writing B along j, so both sides are coalesced; a
+  ! plain loop leaves one side strided by a whole line and runs at 40% of
+  ! the bandwidth.  This is the one CUDA Fortran kernel of the code: the
+  ! OpenMP forms tried (teams distribute + parallel do, teams loop + loop)
+  ! either leave the tile in global memory or generate slow inner loops,
+  ! and both lose to the plain loop (FINDINGS.md).  The kernel runs on the
+  ! OpenMP target stream, in order with the transforms and the alltoall.
+  subroutine transpose_tiled(A, lda, n1, n2, nplanes, nblocks, B, ldb, jb)
+    integer(C_INT), intent(in) :: lda, n1, n2, nplanes, nblocks, ldb, jb
+    complex(C_DOUBLE_COMPLEX), intent(in), target :: A(lda, n2, nplanes, nblocks)
+    complex(C_DOUBLE_COMPLEX), intent(inout), target :: B(ldb, n1, nplanes)
+#ifdef HAVE_CUDA
+    complex(C_DOUBLE_COMPLEX), device, pointer :: dA(:, :, :, :), dB(:, :, :)
+    type(c_devptr) :: pA, pB
+    integer(kind=cuda_stream_kind) :: stream
+    !$omp target data use_device_addr(A, B)
+    pA = transfer(c_loc(A), pA); pB = transfer(c_loc(B), pB)
+    !$omp end target data
+    call c_f_pointer(pA, dA, [lda, n2, nplanes, nblocks])
+    call c_f_pointer(pB, dB, [ldb, n1, nplanes])
+    stream = transfer(target_stream(), stream)
+    call transpose_tile_kernel<<<dim3((n1 + TILE - 1)/TILE, (n2 + TILE - 1)/TILE, nplanes*nblocks), &
+                                 dim3(TILE, TILE/ROWS_PER_THREAD, 1), 0, stream>>> (dA, dB, n1, n2, nplanes, jb)
+#else
+    integer(C_INT) :: block, plane, i, j
+    do block = 1, nblocks
+      do plane = 1, nplanes
+        do j = 1, n2
+          do i = 1, n1
+            B(jb*(block - 1) + j, i, plane) = A(i, j, plane, block)
           end do
         end do
       end do
     end do
-  end subroutine unpack_xTOz
+#endif
+  end subroutine transpose_tiled
+
+#ifdef HAVE_CUDA
+  ! One thread block per tile: blockIdx (i tile, j tile, plane and block),
+  ! TILE x TILE/ROWS_PER_THREAD threads, each doing ROWS_PER_THREAD rows.
+  ! The tile is padded by one so that the transposed read has no bank
+  ! conflicts.
+  attributes(global) subroutine transpose_tile_kernel(A, B, n1, n2, nplanes, jb)
+    integer(C_INT), value :: n1, n2, nplanes, jb
+    complex(C_DOUBLE_COMPLEX), device, intent(in) :: A(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), device, intent(inout) :: B(:, :, :)
+    complex(C_DOUBLE_COMPLEX), shared :: t(TILE + 1, TILE)   ! (Fortran: not "tile", that is TILE)
+    integer(C_INT) :: i0, j0, plane, block, tx, ty, k
+    i0 = (blockIdx%x - 1)*TILE
+    j0 = (blockIdx%y - 1)*TILE
+    plane = mod(blockIdx%z - 1, nplanes) + 1
+    block = (blockIdx%z - 1)/nplanes + 1
+    tx = threadIdx%x
+    ty = threadIdx%y
+    do k = ty, TILE, TILE/ROWS_PER_THREAD
+      if (i0 + tx <= n1 .and. j0 + k <= n2) t(tx, k) = A(i0 + tx, j0 + k, plane, block)
+    end do
+    call syncthreads()
+    do k = ty, TILE, TILE/ROWS_PER_THREAD
+      if (j0 + tx <= n2 .and. i0 + k <= n1) B(jb*(block - 1) + j0 + tx, i0 + k, plane) = t(k, tx)
+    end do
+  end subroutine transpose_tile_kernel
+#endif
 
   ! The one collective of the solver.  On the GPU the buffers stay on the
   ! device: the use_device_addr block hands MPI (CUDA-aware) or NCCL their
@@ -362,34 +360,45 @@ contains
 #endif
   end subroutine alltoall
 
+  ! The layouts of the transpose calls (block = source rank + 1):
+  !   one rank    Vx(ix, iz, iy, m)             = Vz(iz, ix, iy, m)
+  !   many ranks  Vx(src*nxB + ix, iz, iy, m)   = recv(iz, ix, iy, m, src)
   subroutine transpose_zTOx(Vz, Vx)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(in), contiguous :: Vz(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out), contiguous :: Vx(:, :, :, :)
+    integer(C_INT) :: nplanes
+    nplanes = size(Vz, 3)*size(Vz, 4)
     if (transpose_is_local) then
-      call repack_zTOx_local(Vz, Vx)
+      call transpose_tiled(Vz, nzd, nzd, nxB, nplanes, 1, Vx, size(Vx, 1), 0)
       call toc(T_PACK)
     else
       call pack_zTOx(Vz, sendbuf)
       call toc(T_PACK)
       call alltoall()
       call toc(T_ALLTOALL)
-      call unpack_zTOx(recvbuf, Vx)
+      if (nplanes*nxB*nzB /= sendcount) error stop 'transpose_zTOx: whole buffers only'
+      call transpose_tiled(recvbuf, nzB, nzB, nxB, nplanes, npxz, Vx, size(Vx, 1), nxB)
       call toc(T_PACK)
     end if
   end subroutine transpose_zTOx
 
+  !   one rank    Vz(iz, ix, iy, m)             = Vx(ix, iz, iy, m)
+  !   many ranks  Vz(src*nzB + iz, ix, iy, m)   = recv(ix, iz, iy, m, src)
   subroutine transpose_xTOz(Vx, Vz)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(in), contiguous :: Vx(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out), contiguous :: Vz(:, :, :, :)
+    integer(C_INT) :: nplanes
+    nplanes = size(Vx, 3)*size(Vx, 4)
     if (transpose_is_local) then
-      call repack_xTOz_local(Vx, Vz)
+      call transpose_tiled(Vx, size(Vx, 1), nxB, nzd, nplanes, 1, Vz, nzd, 0)
       call toc(T_PACK)
     else
       call pack_xTOz(Vx, sendbuf)
       call toc(T_PACK)
       call alltoall()
       call toc(T_ALLTOALL)
-      call unpack_xTOz(recvbuf, Vz)
+      if (nplanes*nxB*nzB /= sendcount) error stop 'transpose_xTOz: whole buffers only'
+      call transpose_tiled(recvbuf, nxB, nxB, nzB, nplanes, npxz, Vz, nzd, nzB)
       call toc(T_PACK)
     end if
   end subroutine transpose_xTOz
