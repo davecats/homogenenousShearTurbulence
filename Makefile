@@ -95,7 +95,7 @@ $(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o $(BUILD)/hst_timer.o $(BUILD)/h
 $(BUILD)/hst_fft.o:        $(BUILD)/hst_params.o
 $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_timer.o:      $(BUILD)/hst_params.o $(BUILD)/hst_fft.o
-$(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o
+$(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o $(BUILD)/hst_timer.o
 $(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
 $(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o

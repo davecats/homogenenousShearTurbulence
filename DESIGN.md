@@ -471,6 +471,14 @@ that reversing it is an addition, not a rewrite.
   exactly one routine so the channel's `channel_comm_alltoall_complex` and
   `channel_nccl_p2p.c` can be dropped in as `comm = nccl` once HoreKA
   timings show what it buys.
+  *Done (multi-GPU session, FINDINGS.md):* the 4-A100 timer showed the
+  MPI alltoall at 60-68% of the step, so the backend went in, but not as
+  the channel's C bridge: 90 lines of Fortran in `hst_mpi.f90` call the
+  NCCL C prototypes directly (grouped `ncclSend`/`ncclRecv` per peer on
+  the OpenMP target stream, so no host synchronisation), `make GPU=1
+  NCCL=1` links `-cudalib=nccl`, and `transport = 'auto' | 'mpi' | 'nccl'`
+  in the deck chooses at run time (`auto` = NCCL when built in and every
+  rank has its own GPU).
 - **(iii) Autotuner: dropped.**  It timed candidate `(npxz, npy)` splits,
   y-Schur pass hierarchies and pipelined-LU batch counts.  With `npy = 1`
   there is nothing to tune; if (i) is added, the split is one integer in the
@@ -516,5 +524,5 @@ that reversing it is an addition, not a rewrite.
 - ~~CPL-compatible files~~: done, as the only format (section 8).
 - **Pressure cadence**: the pressure is already computed only at snapshot
   times (`dt_field`); a separate `dt_pressure` would decouple the two.
-- **y decomposition and NCCL transport** (section 7, WP6), and the
-  small-grid performance pass (FINDINGS.md).
+- **y decomposition** (section 7, WP6) and the small-grid performance
+  pass (FINDINGS.md).  ~~NCCL transport~~: done (section 7 (ii)).

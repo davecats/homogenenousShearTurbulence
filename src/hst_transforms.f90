@@ -19,6 +19,7 @@ module hst_transforms
   use hst_params
   use hst_mpi, only: transpose_zTOx, transpose_xTOz
   use hst_fft
+  use hst_timer, only: toc, T_TRANSFORM, T_PRODUCTS
 
   implicit none
   private
@@ -70,9 +71,12 @@ contains
     end do
   end subroutine zero_vvdx_padding
 
+  ! The toc before each transpose charges the z transform, which runs
+  ! asynchronously on the stream, to this phase and not to the transpose.
   subroutine transform_to_physical()
     call assemble_vvdz()
     call IFT()
+    call toc(T_TRANSFORM)
     call transpose_zTOx(VVdz, VVdx)
     call zero_vvdx_padding()
     call RFT()
@@ -108,6 +112,7 @@ contains
   ! (iz, ix) of product p is VVdz(izd(iz) + 1, ix - nx0 + 1, iy, p).
   subroutine products_to_spectral()
     call HFT()
+    call toc(T_PRODUCTS)
     call transpose_xTOz(VVdp, VVdz)
     call FFT()
   end subroutine products_to_spectral

@@ -40,13 +40,14 @@ Each rank owns all of `y` (one GPU per rank, x-z pencils).
 source env/istm.sh            # istmio2 / istmcetus / istmcorax
 make                          # CPU: gfortran + MPI + FFTW  -> build-cpu/hst
 make GPU=1                    # GPU: nvfortran + cuFFT       -> build-gpu/hst
+make GPU=1 NCCL=1             # the same with NCCL for the alltoall (multi-GPU nodes)
 make test                     # the test programs, same build directory
 ```
 
 On HoreKA:
 
 ```bash
-source env/horeka.sh gpu;  make GPU=1 GPU_ARCH=cc80     # A100 (cc90 for H100)
+source env/horeka.sh gpu;  make GPU=1 GPU_ARCH=cc80 NCCL=1     # A100 (cc90 for H100)
 source env/horeka.sh cpu;  make
 ```
 
@@ -70,9 +71,14 @@ the clock too); a field written by the CPL code works as well.  Otherwise
 a seeded, divergence-free random field is generated (`&init`).
 
 `timing = .true.` in `&time_control` prints the wall-clock time per phase
-of the substep at the end of the run (`src/hst_timer.f90`).  `line_chunk`
+of the substep at the end of the run (`src/hst_timer.f90`; the transposes
+appear as their pack/unpack kernels and the alltoall).  `line_chunk`
 in `&mesh` bounds the workspace of the line solver (x columns per batch;
 0 = all columns on the GPU, 16 on the CPU, see `src/hst_linsolve.f90`).
+`transport` in `&mesh` chooses how the alltoall moves the device buffers:
+`'mpi'` (CUDA-aware MPI), `'nccl'` (a build with `NCCL=1`, one GPU per
+rank) or `'auto'` (NCCL when both hold, the default; the choice is printed
+at start-up).
 
 ## Output
 
@@ -156,7 +162,8 @@ step), so a second node buys nothing before WP6.
 | --- | --- |
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
-| y decomposition, NCCL transport | not started (DESIGN.md 7, WP6) |
+| NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
+| y decomposition | not started (DESIGN.md 7, WP6) |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
@@ -164,8 +171,8 @@ step), so a second node buys nothing before WP6.
 ```
 src/hst_params.f90       all state: mesh, parameters, clock, rank layout, fields
 src/hst_input.f90        the namelist deck
-src/hst_mpi.f90          x-z pencil decomposition, alltoall transpose, MPI-IO types
-src/hst_fft.f90          FFTW / cuFFT (the only vendor-specific file besides hst_mpi)
+src/hst_mpi.f90          x-z pencil decomposition, alltoall transpose (MPI or NCCL), MPI-IO types
+src/hst_fft.f90          FFTW / cuFFT, the target stream (the only vendor-specific file besides hst_mpi)
 src/hst_timer.f90        per-phase timer
 src/hst_setup.f90        allocation and device mapping
 src/hst_transforms.f90   spectral <-> physical, products, CFL

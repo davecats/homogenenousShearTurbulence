@@ -1,6 +1,6 @@
 # Environment for HoreKA (KIT).
-# Usage:  source env/horeka.sh gpu    then   make GPU=1 GPU_ARCH=cc80   (A100)
-#                                                        GPU_ARCH=cc90   (H100)
+# Usage:  source env/horeka.sh gpu    then   make GPU=1 GPU_ARCH=cc80 NCCL=1   (A100)
+#                                                        GPU_ARCH=cc90          (H100)
 #         source env/horeka.sh cpu    then   make
 #
 # The GPU build uses NVHPC's own HPC-X OpenMPI (CUDA-aware), not the system

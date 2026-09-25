@@ -19,8 +19,10 @@ module hst_timer
   public :: T_TRANSFORM, T_PACK, T_ALLTOALL, T_PREPARE, T_PRODUCTS, T_SHIFT, T_SOLVE, T_RECOVER, T_OTHER
 
   ! The two transpose phases are charged from inside hst_mpi, so the
-  ! transform and product phases are the FFTs and kernels around them.  On
-  ! one rank "pack, unpack" is the local repack and there is no alltoall.
+  ! transform and product phases are the FFTs and kernels around them
+  ! (hst_transforms marks its phase before each transpose, because the z
+  ! transform runs asynchronously and would otherwise land in the pack).
+  ! On one rank "pack, unpack" is the local repack and there is no alltoall.
   integer, parameter :: T_TRANSFORM = 1, T_PACK = 2, T_ALLTOALL = 3, T_PREPARE = 4, T_PRODUCTS = 5, &
                         T_SHIFT = 6, T_SOLVE = 7, T_RECOVER = 8, T_OTHER = 9, NPHASE = 9
   character(len=24), parameter :: names(NPHASE) = [character(len=24) :: &
