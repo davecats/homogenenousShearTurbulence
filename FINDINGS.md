@@ -359,3 +359,65 @@ so the transform's time landed in the pack.  `hst_transforms` now marks
 its phase before each transpose.  The alltoall line was never affected
 (the pack kernel is synchronous, so the transfer starts on a quiet
 device).  Corrected split below.
+
+**Where the time goes now.**  Four A100 with NCCL, corrected timer, share
+of the step (`jobs/horeka_profile.slurm`, `NP=4`):
+
+| phase | bench_256 | bench_512 |
+| --- | --- | --- |
+| products, FFTs, buildrhs | 24 % | 31 % |
+| transpose pack, unpack | 15 % | 18 % |
+| transpose alltoall | 18 % | 16 % |
+| implicit solves | 21 % | 13 % |
+| ghosts, dv/dy, u and w | 12 % | 7 % |
+| to physical: FFTs, CFL | 7 % | 10 % |
+
+No single item dominates any more.  The pack/unpack kernels run at about
+half the A100's bandwidth (2.4 GB in 3 ms at 512^3), an uncoalesced write
+side; a tiled transpose would take them to 1/3 of that.  The alltoall at
+16% is the upper bound of what overlapping it with the transforms of the
+next batch (the channel's double buffering) could hide, at the price of
+splitting the three-field batches again; not done, the pack kernels and
+the products are the cheaper targets.
+
+On one A100 (bench_256, nsys kernel summary of the same day): line solver
+26% (three kernels), `build_products` 13.5%, `buildrhs` 12.3%, the local
+repacks between the two pencil layouts 14.6% (`repack_xTOz_local` 2.0 ms
+per call, 1.2 GB moved, i.e. 40% of bandwidth: the same uncoalesced
+transpose as the pack kernels), cuFFT 22%.  On one rank the repack is pure
+overhead of the pencil abstraction; cuFFT could transform the z lines in
+the x-pencil layout with a strided plan, one call per y row, or the repack
+could become a tiled transpose.
+
+**Reciprocal pivots in the line solver** (handoff Part 1, item 2): the
+forward sweep divided by the pivot twice per row and the back substitution
+three times; `U(:, :, 0)` now stores 1/pivot and the sweeps multiply.  RTX
+3060, bench_64, one rank, back to back: implicit solves 0.0286 -> 0.0186
+s/step, the step 0.146 -> 0.131.  Regression 1e-14 (CPU) and 6e-14 (GPU)
+against the stored references, which were not updated.
+
+**Tried and dropped: `buildrhs` with `iz` innermost** (handoff Part 1,
+item 1).  The loop has `iy` innermost so that `rhs` is written
+contiguously while the fifteen stencil reads of `VVdz` are a plane apart
+between neighbouring threads; the guess was that reading contiguously and
+writing strided would win.  It loses, 2.44 -> 4.47 ms per call on the
+A100 (bench_256, `~/hst-exp` against `~/hst` back to back): with `iy`
+innermost the five-point windows of neighbouring threads overlap four
+fifths, so the L1 cache serves most of the reads, and the write side is
+the cheap one.  The loop stays as it was.  Same A/B, one A100: the
+reciprocal pivots take the implicit solves from 0.0197 to 0.0186 s/step
+(6%) and the step from 0.1157 to 0.1128.
+
+**Result** of the session (`jobs/horeka_bench_all.slurm`, same day, all
+changes in; the README table):
+
+| deck | 1 A100 | 4 A100 | before the session, 1 / 4 |
+| --- | --- | --- | --- |
+| bench_64 | 0.0160 | | 0.0186 / |
+| bench_256 | 0.113 | 0.0425 | 0.115 / 0.101 |
+| bench_512 | 0.955 | 0.296 | 0.970 / 0.809 |
+
+The single-GPU gain is the solver's reciprocal pivots; the 4-GPU gain is
+NCCL.  What is left on four GPUs is spread over the products and their
+transforms, the pack/unpack kernels, the alltoall and the solver, none of
+them above a third of the step (NEXT_SESSION.md).

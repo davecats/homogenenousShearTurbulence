@@ -142,19 +142,21 @@ production = dissipation (FINDINGS.md).
 ## Performance
 
 Seconds per full time step (three substeps), `examples/bench_*.in`, after
-the performance pass of FINDINGS.md (the numbers in brackets are those of
-the code before it):
+the multi-GPU pass of FINDINGS.md (in brackets: after the single-GPU
+performance pass, and before it):
 
 | grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
 | --- | --- | --- | --- | --- |
-| 64 x 128 x 64 | 0.019 (0.054) | | 0.17 (0.18) | 0.89 (1.03) |
-| 256 x 256 x 256 | 0.115 (0.334) | 0.101 (0.140) | 1.25 (1.33) | |
-| 512 x 512 x 512 | 0.97 (1.99) | 0.81 (0.98) | | |
+| 64 x 128 x 64 | 0.016 (0.019, 0.054) | | 0.13 (0.17, 0.18) | 0.89 (1.03) |
+| 256 x 256 x 256 | 0.113 (0.115, 0.334) | 0.042 (0.101, 0.140) | 1.25 (1.33) | |
+| 512 x 512 x 512 | 0.955 (0.970, 1.99) | 0.296 (0.809, 0.98) | | |
 
-The RTX 3060 runs double precision at 1/64 rate, so it gains little from
-what helps the A100; `timing = .true.` prints where the time goes.  Four
-A100 at 256^3 are limited by the alltoall (transposes are 85% of the
-step), so a second node buys nothing before WP6.
+Four A100 use the NCCL transport (`make GPU=1 NCCL=1`); with MPI's
+alltoall the 4-GPU step is 2.1-2.5x longer (FINDINGS.md).  The RTX 3060
+runs double precision at 1/64 rate, so it gains little from what helps
+the A100; `timing = .true.` prints where the time goes.  Four A100 are
+now 2.7x one at 256^3 and 3.2x at 512^3, with no phase above a third of
+the step; a second node needs WP6 or a two-node measurement first.
 
 ## Status
 
