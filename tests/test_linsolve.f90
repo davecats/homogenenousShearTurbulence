@@ -1,68 +1,114 @@
 ! Unit test of the cyclic pentadiagonal line solver (WP2).
 !
-!   mpirun -np 1 build-cpu/test_linsolve [hst.in]
+!   mpirun -np N build-cpu/test_linsolve [hst.in]
 !
-! Random complex band matrices with the wrap-around structure of the
-! shear-periodic stencil (corner entries carrying a phase), random exact
-! solutions, right-hand sides formed by the band product; the solver must
-! recover the solutions to round-off.  Runs on the device in a GPU build.
+! For each system kind of line_solve the operator is applied on the host to
+! a random field: the stencil sums run over the ghost rows, which hold the
+! shear-periodic images at a nonzero time, so the wrap phase of the solver
+! is checked against the ghost-row convention of the rest of the code.  The
+! solve of that right-hand side must give the field back to round-off.
+! KIND_DY is checked through its defining identity D0 (dst) = D1 src.
+! Runs on the device in a GPU build.
 program test_linsolve
 
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
   use test_common
-  use hst_input
-  use hst_mpi
   use hst_linsolve
+  use hst_derivatives, only: shear_shifts, fill_ghosts
   use hst_initial, only: uniform_from_key
 
   implicit none
 
-  integer :: ierr, il, iy, j, c, nl
-  complex(C_DOUBLE_COMPLEX), allocatable :: xtrue(:, :), Aref(:, :, :)
-  complex(C_DOUBLE_COMPLEX) :: ph, b
-  real(C_DOUBLE) :: err, xmax, r1, r2
+  integer :: ierr, ix, iy, iz, j, kind
+  real(C_DOUBLE) :: lambda, kk, c, err, ref, worst, err_g, ref_g, sx, sz
+  complex(C_DOUBLE_COMPLEX) :: acc, ph
+  character(len=8), parameter :: name(5) = ['D2V     ', 'ETA     ', 'POISSON ', 'D0      ', 'DY      ']
 
   call test_start()
+  time = 0.37d0                              ! a nonzero wrap phase
   call test_setup()
+  call shear_shifts(time, sx, sz)
 
-  nl = min(nlines_max, 37)
-  allocate (xtrue(nl, 0:ny - 1), Aref(nl, 0:ny - 1, -2:2))
-  do il = 1, nl
-    ph = exp(dcmplx(0.0d0, 6.283185307179586d0*uniform_from_key(7, 9, il, 0, 0)))
-    do iy = 0, ny - 1
-      do j = -2, 2
-        r1 = uniform_from_key(1, j + 3, iy, il, 0) - 0.5d0
-        r2 = uniform_from_key(2, j + 3, iy, il, 0) - 0.5d0
-        Aref(il, iy, j) = dcmplx(r1, r2)
-        if (j == 0) Aref(il, iy, j) = Aref(il, iy, j) + 4.0d0      ! diagonally dominant
-        if (iy + j >= ny) Aref(il, iy, j) = Aref(il, iy, j)*ph
-        if (iy + j < 0) Aref(il, iy, j) = Aref(il, iy, j)*conjg(ph)
+  ! random field in V(:, :, :, 1), (0,0) mode zero (singular for two kinds),
+  ! ghost rows at the current time
+  V = 0
+  do ix = nx0, nxN
+    do iz = -nz, nz
+      if (ix == 0 .and. iz == 0) cycle
+      do iy = 0, ny - 1
+        V(iy, iz, ix, 1) = dcmplx(uniform_from_key(3, 1, iy, iz, ix) - 0.5d0, uniform_from_key(4, 1, iy, iz, ix) - 0.5d0)
       end do
-      xtrue(il, iy) = dcmplx(uniform_from_key(3, 1, iy, il, 0) - 0.5d0, uniform_from_key(4, 1, iy, il, 0) - 0.5d0)
     end do
   end do
-  ! b = A x with columns taken modulo ny
-  do il = 1, nl
-    do iy = 0, ny - 1
-      b = 0.0d0
-      do j = -2, 2
-        c = modulo(iy + j, ny)
-        b = b + Aref(il, iy, j)*xtrue(il, c)
-      end do
-      X(il, iy) = b
-      A(il, iy, :) = Aref(il, iy, :)
-    end do
-  end do
-  !$omp target update to(A, X)
-  call solve_lines(int(nl, C_INT))
-  !$omp target update from(X)
+  !$omp target update to(V)
+  call fill_ghosts(1)
+  !$omp target update from(V)
+  lambda = 123.4d0
+  worst = 0.0d0
 
-  err = maxval(abs(X(1:nl, :) - xtrue))
-  xmax = maxval(abs(xtrue))
-  if (has_terminal) write (*, '(A,I0,A,I0,A,ES10.2,A,ES10.2)') '   cyclic pentadiagonal solve, ', nl, &
-    ' lines of ', ny, ': max error ', err, '  (max |x| = ', xmax, ')'
-  call test_finish(err <= 1.0d-12*xmax)
+  do kind = KIND_D2V, KIND_DY
+    ! right-hand side on the host: the operator applied through the ghost rows
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        kk = k2(iz, ix)
+        do iy = 0, ny - 1
+          acc = 0.0d0
+          do j = -2, 2
+            select case (kind)
+            case (KIND_D2V)
+              c = lambda*(der(iy, 2, j) - kk*der(iy, 0, j)) - &
+                  ni*(der(iy, 3, j) - 2.0d0*kk*der(iy, 2, j) + kk*kk*der(iy, 0, j))
+            case (KIND_ETA)
+              c = lambda*der(iy, 0, j) - ni*(der(iy, 2, j) - kk*der(iy, 0, j))
+            case (KIND_POISSON)
+              c = der(iy, 2, j) - kk*der(iy, 0, j)
+            case default
+              c = der(iy, 0, j)
+            end select
+            acc = acc + c*V(iy + j, iz, ix, 1)
+          end do
+          rhs(iy, iz, ix, 1) = acc
+        end do
+      end do
+    end do
+    rhs(:, :, :, 2) = 0
+    !$omp target update to(rhs)
+    if (kind == KIND_DY) then
+      call line_solve(kind, lambda, V(:, :, :, 1), rhs(:, :, :, 2))
+    else
+      call line_solve(kind, lambda, rhs(:, :, :, 1), rhs(:, :, :, 2))
+    end if
+    !$omp target update from(rhs)
+    err = 0.0d0; ref = 0.0d0
+    if (kind == KIND_DY) then
+      ! D0 dst must equal D1 src: fill the ghost rows of dst on the host
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
+          rhs(ny, iz, ix, 2) = rhs(0, iz, ix, 2)*ph; rhs(ny + 1, iz, ix, 2) = rhs(1, iz, ix, 2)*ph
+          rhs(-1, iz, ix, 2) = rhs(ny - 1, iz, ix, 2)*conjg(ph); rhs(-2, iz, ix, 2) = rhs(ny - 2, iz, ix, 2)*conjg(ph)
+          do iy = 0, ny - 1
+            acc = 0.0d0
+            do j = -2, 2
+              acc = acc + der(iy, 0, j)*rhs(iy + j, iz, ix, 2) - der(iy, 1, j)*V(iy + j, iz, ix, 1)
+            end do
+            err = max(err, abs(acc))
+            ref = max(ref, abs(rhs(iy, iz, ix, 1)))     ! the D0-weighted field itself
+          end do
+        end do
+      end do
+    else
+      err = maxval(abs(rhs(0:ny - 1, :, :, 2) - V(0:ny - 1, :, :, 1)))
+      ref = maxval(abs(V(0:ny - 1, :, :, 1)))
+    end if
+    call MPI_Allreduce(err, err_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+    call MPI_Allreduce(ref, ref_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+    worst = max(worst, err_g/ref_g)
+    if (has_terminal) write (*, '(A,A,A,ES10.2,A,ES10.2)') '   ', name(kind), ': max error ', err_g, '  relative ', err_g/ref_g
+  end do
+  if (has_terminal) write (*, '(A,I0,A,I0,A)') '   (', (2*nz + 1)*nxB, ' lines of ', ny, ' on rank 0)'
+  call test_finish(worst <= 1.0d-11)
 
 end program test_linsolve

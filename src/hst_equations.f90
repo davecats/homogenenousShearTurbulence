@@ -34,6 +34,7 @@ module hst_equations
   use hst_linsolve, only: line_solve, KIND_D2V, KIND_ETA, KIND_D0, KIND_DY
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
+  use hst_timer
 
   implicit none
   private
@@ -52,9 +53,12 @@ contains
     integer(C_INT) :: i, m
     real(C_DOUBLE) :: dt_sub
     do i = 1, 3
+      call tic()
       if (.not. linear .or. i == 3) call transform_to_physical()
       if (i == 3) call compute_cfl()
+      call toc(T_TRANSFORM)
       call buildrhs_prepare(RK_rai(:, i))
+      call toc(T_PREPARE)
       if (.not. linear) then
         do m = 1, 6
           call build_products(m)
@@ -62,14 +66,17 @@ contains
           call buildrhs(RK_rai(:, i), m)
         end do
       end if
+      call toc(T_PRODUCTS)
       dt_sub = 2.0d0/RK_rai(1, i)*deltat
       call shear_shift(dt_sub)
       time = time + dt_sub
+      call toc(T_SHIFT)
       call linsolve(RK_rai(1, i)/deltat)
       if (stokes_active()) then
         call stokes_apply()
         call fill_ghosts(3)
       end if
+      call toc(T_RECOVER)
     end do
   end subroutine timestep
 
@@ -279,6 +286,7 @@ contains
 
     call line_solve(KIND_D2V, lambda, rhs(:, :, :, 2), V(:, :, :, 2))
     call line_solve(KIND_ETA, lambda, rhs(:, :, :, 1), V(:, :, :, 1))
+    call toc(T_SOLVE)
     call fill_ghosts(2)
     call line_solve(KIND_DY, 0.0d0, V(:, :, :, 2), V(:, :, :, 3))     ! V(:, :, :, 3) = dv/dy
     !$omp target teams distribute parallel do collapse(3) default(none) &

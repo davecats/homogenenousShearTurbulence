@@ -20,6 +20,7 @@ SRC = src/hst_params.f90 \
       src/hst_input.f90 \
       src/hst_mpi.f90 \
       src/hst_fft.f90 \
+      src/hst_timer.f90 \
       src/hst_setup.f90 \
       src/hst_transforms.f90 \
       src/hst_initial.f90 \
@@ -92,13 +93,14 @@ $(BUILD)/hst_input.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o
 $(BUILD)/hst_fft.o:        $(BUILD)/hst_params.o
 $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
+$(BUILD)/hst_timer.o:      $(BUILD)/hst_params.o $(BUILD)/hst_fft.o
 $(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o
 $(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
 $(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o
 $(BUILD)/hst_linsolve.o:   $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst_stokes.o:     $(BUILD)/hst_params.o
-$(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_stokes.o
+$(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_stokes.o $(BUILD)/hst_timer.o
 $(BUILD)/hst_stats.o:      $(BUILD)/hst_params.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_stokes.o
 $(BUILD)/hst_pressure.o:   $(BUILD)/hst_params.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_io.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst.o:            $(OBJ)

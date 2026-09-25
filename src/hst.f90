@@ -28,6 +28,7 @@ program hst
   use hst_stats
   use hst_pressure
   use hst_stokes
+  use hst_timer
 #ifdef HAVE_CUDA
   use omp_lib
 #endif
@@ -85,6 +86,7 @@ program hst
     istep = istep + 1
     call timestep()
 
+    call tic()
     if (crossed(dt_stat)) call outstats()
     if (crossed(dt_field)) then
       ifield = ifield + 1
@@ -101,6 +103,7 @@ program hst
       call restart_write('Dati.cart.out')
     end if
     call new_timestep()
+    call toc(T_OTHER)
 
     t1 = MPI_Wtime()
     elapsed = elapsed + (t1 - t0)
@@ -109,7 +112,9 @@ program hst
   end do
 
   !------------------------------------------------------------ finish ----
-  if (has_terminal) print '(A,F12.5,A,I0,A)', '   end of run at time', time, ' after ', istep, ' steps; writing Dati.cart.out'
+  if (has_terminal) print '(A,F12.5,A,I0,A,F10.2,A,F9.5,A)', '   end of run at time', time, ' after ', istep, &
+    ' steps; ', elapsed, ' s, ', elapsed/max(istep, 1_C_SIZE_T), ' s/step; writing Dati.cart.out'
+  call timer_report(istep)
   !$omp target update from(V)
   call restart_write('Dati.cart.out')
   call close_runtimedata()

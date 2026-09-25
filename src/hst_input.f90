@@ -19,7 +19,7 @@ contains
     namelist /mesh/ nx, ny, nz, alfa0, beta0, ly, ystretch, line_chunk
     namelist /physics/ re, S, linear, exact_shift, s2_amplitude, s2_period, s2_start, &
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
-    namelist /time_control/ deltat, cflmax, t_max, nstep, dt_stat, dt_field, dt_save, time, time_from_restart
+    namelist /time_control/ deltat, cflmax, t_max, nstep, dt_stat, dt_field, dt_save, time, time_from_restart, timing
     namelist /init/ amplitude, seed, kpeak
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
@@ -30,7 +30,7 @@ contains
     sl_amplitude = 0.0d0; sl_period = 1.0d0; sl_delta = 0.02d0; sl_start = 0.0d0; sl_bodyforce = .true.; sl_ramp = .false.
     deltat = 0.0d0; cflmax = 1.0d0; t_max = 100.0d0; nstep = 1000000
     dt_stat = 0.01d0; dt_field = 10.0d0; dt_save = 10.0d0
-    time = 0.0d0; time_from_restart = .false.
+    time = 0.0d0; time_from_restart = .false.; timing = .false.
     amplitude = 1.0d-3; seed = 1; kpeak = 4.0d0
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
@@ -96,7 +96,7 @@ contains
       '  start=', sl_start, '  bodyforce=', sl_bodyforce, '  ramp=', sl_ramp
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
-    write (*, '(A,I10,A,L1)') '   nstep =', nstep, '   time_from_restart = ', time_from_restart
+    write (*, '(A,I10,A,L1,A,L1)') '   nstep =', nstep, '   time_from_restart = ', time_from_restart, '   timing = ', timing
     write (*, '(A,ES10.3,A,I6,A,F8.3)') '   amplitude=', amplitude, '   seed =', seed, '   kpeak =', kpeak
     write (*, '(A)') ' '
   end subroutine print_input

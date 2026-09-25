@@ -27,7 +27,7 @@ module hst_fft
   implicit none
   private
 
-  public :: init_fft, free_fft, FFT, IFT, RFT, HFT
+  public :: init_fft, free_fft, FFT, IFT, RFT, HFT, device_sync
   public :: VVdz, VVdx, rVVdx, products
 
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: VVdz(:, :, :), VVdx(:, :, :)
@@ -105,6 +105,14 @@ contains
     !$omp target exit data map(delete: VVdz, VVdx, rVVdx, products)
     deallocate (VVdz, VVdx, rVVdx, products)
   end subroutine free_fft
+
+  ! Wait for everything queued on the device (the timer's boundaries).
+  subroutine device_sync()
+#ifdef HAVE_CUDA
+    integer :: istat
+    istat = cudaDeviceSynchronize()
+#endif
+  end subroutine device_sync
 
   subroutine check(istat, where)
     integer, intent(in) :: istat

@@ -24,7 +24,7 @@ module hst_params
   real(C_DOUBLE), save :: alfa0, beta0        ! fundamental wavenumbers
   real(C_DOUBLE), save :: lx, ly, lz          ! box; ly is an input, lx, lz derived
   real(C_DOUBLE), save :: ystretch            ! tanh clustering of y at mid-box (0 = uniform)
-  integer(C_INT), save :: line_chunk          ! x columns per line-solver batch (0 = all, hst_linsolve)
+  integer(C_INT), save :: line_chunk          ! x columns per line-solver batch (0 = default, hst_linsolve)
   !$omp declare target(ny)
 
   !------------------------------------------------------------- physics ----
@@ -46,6 +46,7 @@ module hst_params
   real(C_DOUBLE), save :: time, time0 = 0.0d0
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
   logical, save :: time_from_restart
+  logical, save :: timing                     ! per-phase timer (hst_timer)
 
   !------------------------------------------------------ initial field ----
   real(C_DOUBLE), save :: amplitude, kpeak
