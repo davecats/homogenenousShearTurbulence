@@ -50,18 +50,20 @@ program test_roundtrip
   call compute_cfl()
   y_first = ny0 - 2
   y_last = nyN + 2
+  !$omp target teams distribute parallel do collapse(4) default(none) &
+  !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor) private(i, j, k, m)
   do m = 1, 3
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor, m) private(i, j, k)
     do i = y_first, y_last
       do j = 1, nzB
         do k = 1, 2*nxd
-          products(k, j, i) = rVVdx(k, j, i, m)*factor
+          products(k, j, i, m) = rVVdx(k, j, i, m)*factor
         end do
       end do
     end do
-    call products_to_spectral()
-    call vvdz_to_field(W)
+  end do
+  call products_to_spectral()
+  do m = 1, 3
+    call vvdz_to_field(W, m)
     !$omp target update from(W)
     err = maxval(abs(W - V0(:, :, :, m)))
     call MPI_Allreduce(err, err_global, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)

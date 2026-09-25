@@ -28,7 +28,7 @@ program test_conservation
 
   implicit none
 
-  integer :: ierr, mask, i, m, j, kk, ii, y_first, y_last
+  integer :: ierr, mask, i, m, g, p, j, kk, ii, y_first, y_last
   real(C_DOUBLE) :: q0, q1, rate(0:6), dt_sub
   character(len=2), parameter :: name(6) = ['uu', 'vv', 'ww', 'uv', 'vw', 'uw']
 
@@ -55,21 +55,24 @@ program test_conservation
     do i = 1, 3
       call transform_to_physical()
       call buildrhs_prepare(RK_rai(:, i))
-      do m = 1, 6
-        call build_products(m)
-        if (mask /= 0 .and. m /= mask) then
-          !$omp target teams distribute parallel do collapse(3) default(none) &
-          !$omp shared(products, nxd, nzB, y_first, y_last) private(j, kk, ii)
-          do j = y_first, y_last
-            do kk = 1, nzB
-              do ii = 1, 2*nxd
-                products(ii, kk, j) = 0.0d0
+      do g = 1, 2
+        call build_products(g)
+        if (mask /= 0) then
+          ! keep product `mask` only: zero the other two of the group (or all three)
+          !$omp target teams distribute parallel do collapse(4) default(none) &
+          !$omp shared(products, nxd, nzB, y_first, y_last, g, mask) private(p, j, kk, ii)
+          do p = 1, 3
+            do j = y_first, y_last
+              do kk = 1, nzB
+                do ii = 1, 2*nxd
+                  if (3*(g - 1) + p /= mask) products(ii, kk, j, p) = 0.0d0
+                end do
               end do
             end do
           end do
         end if
         call products_to_spectral()
-        call buildrhs(RK_rai(:, i), m)
+        call buildrhs(RK_rai(:, i), g)
       end do
       dt_sub = 2.0d0/RK_rai(1, i)*deltat
       call shear_shift(dt_sub)

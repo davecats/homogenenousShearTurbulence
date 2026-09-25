@@ -44,7 +44,7 @@ contains
 
   ! One full time step of length deltat: three RK substeps, each
   !   transform V to physical space (ghost rows included)
-  !   build the right-hand sides from V and from the six products
+  !   build the right-hand sides from V and from the six products (two groups of three)
   !   shift them to the new time frame (exact mean-shear advection)
   !   advance time; solve the implicit systems; recover u, w; fill ghosts
   ! The CFL number of the third substep is left in cfl (rank-local).
@@ -60,7 +60,7 @@ contains
       call buildrhs_prepare(RK_rai(:, i))
       call toc(T_PREPARE)
       if (.not. linear) then
-        do m = 1, 6
+        do m = 1, 2
           call build_products(m)
           call products_to_spectral()
           call buildrhs(RK_rai(:, i), m)
@@ -131,66 +131,73 @@ contains
     end do
   end subroutine buildrhs_prepare
 
-  ! Nonlinear contribution of product m (1..6 = uu, vv, ww, uv, vw, uw),
-  ! which products_to_spectral has left in VVdz, to the two right-hand
-  ! sides.  With -div(u u) written per component,
+  ! Nonlinear contribution of the three products of group g (1: uu, vv,
+  ! ww; 2: uv, vw, uw), which products_to_spectral has left in VVdz, to the
+  ! two right-hand sides.  With -div(u u) written per component,
   !   rhsu = -i alfa uu - D1 uv - i beta uw
   !   rhsw = -i alfa uw - D1 vw - i beta ww
   !   rhsv = -i alfa uv - D1 vv - i beta vw
   ! the eta equation gets i beta rhsu - i alfa rhsw and the d2v equation
   ! D1 (i alfa rhsu + i beta rhsw) - k2 rhsv, split here by product.
-  subroutine buildrhs(ODE, m)
+  subroutine buildrhs(ODE, g)
     real(C_DOUBLE), intent(in) :: ODE(3)
-    integer(C_INT), intent(in) :: m
-    integer(C_INT) :: ix, iy, iz, j
-    complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, rhsu, rhsw, expl, e
+    integer(C_INT), intent(in) :: g
+    integer(C_INT) :: ix, iy, iz, j, p, m
+    complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, rhsu, rhsw, expl, e, r1, r2, o1, o2
     logical :: no_mean_vw
 
     ! with the Stokes-layer body force the mean w equation carries no
     ! Reynolds-stress divergence (bf_dvw of hst-main): the profile stays W
     no_mean_vw = (stokes_active() .and. sl_bodyforce)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(rhs, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, m, nx0, nxN, nz, ny, no_mean_vw) &
-    !$omp private(ix, iy, iz, j, d0, d1, d2, rhsu, rhsw, expl, e)
+    !$omp shared(rhs, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, g, nx0, nxN, nz, ny, no_mean_vw) &
+    !$omp private(ix, iy, iz, j, p, m, d0, d1, d2, rhsu, rhsw, expl, e, r1, r2, o1, o2)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = 0, ny - 1
-          d0 = 0.0d0; d1 = 0.0d0; d2 = 0.0d0
-          do j = -2, 2
-            d0 = d0 + der(iy, 0, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
-            d1 = d1 + der(iy, 1, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
-            d2 = d2 + der(iy, 2, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
+          r1 = rhs(iy, iz, ix, 1); r2 = rhs(iy, iz, ix, 2)
+          o1 = oldrhs(iy, iz, ix, 1); o2 = oldrhs(iy, iz, ix, 2)
+          do p = 1, 3
+            m = 3*(g - 1) + p
+            d0 = 0.0d0; d1 = 0.0d0; d2 = 0.0d0
+            do j = -2, 2
+              d0 = d0 + der(iy, 0, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, p)
+              d1 = d1 + der(iy, 1, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, p)
+              d2 = d2 + der(iy, 2, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, p)
+            end do
+            select case (m)
+            case (1)   ! uu
+              rhsu = -ialfa(ix)*d0; rhsw = 0.0d0
+              expl = ialfa(ix)*ialfa(ix)*d1
+            case (2)   ! vv
+              rhsu = 0.0d0; rhsw = 0.0d0
+              expl = k2(iz, ix)*d1
+            case (3)   ! ww
+              rhsu = 0.0d0; rhsw = -ibeta(iz)*d0
+              expl = ibeta(iz)*ibeta(iz)*d1
+            case (4)   ! uv
+              rhsu = -d1; rhsw = 0.0d0
+              expl = ialfa(ix)*d2 + ialfa(ix)*k2(iz, ix)*d0
+            case (5)   ! vw
+              rhsu = 0.0d0; rhsw = -d1
+              if (no_mean_vw .and. ix == 0 .and. iz == 0) rhsw = 0.0d0
+              expl = ibeta(iz)*d2 + ibeta(iz)*k2(iz, ix)*d0
+            case default   ! uw
+              rhsu = -ibeta(iz)*d0; rhsw = -ialfa(ix)*d0
+              expl = 2.0d0*ialfa(ix)*ibeta(iz)*d1
+            end select
+            r2 = r2 + ODE(2)*expl
+            o2 = o2 + expl
+            if (ix == 0 .and. iz == 0) then
+              e = dcmplx(dreal(rhsu), dreal(rhsw))
+            else
+              e = ibeta(iz)*rhsu - ialfa(ix)*rhsw
+            end if
+            r1 = r1 + ODE(2)*e
+            o1 = o1 + e
           end do
-          select case (m)
-          case (1)   ! uu
-            rhsu = -ialfa(ix)*d0; rhsw = 0.0d0
-            expl = ialfa(ix)*ialfa(ix)*d1
-          case (2)   ! vv
-            rhsu = 0.0d0; rhsw = 0.0d0
-            expl = k2(iz, ix)*d1
-          case (3)   ! ww
-            rhsu = 0.0d0; rhsw = -ibeta(iz)*d0
-            expl = ibeta(iz)*ibeta(iz)*d1
-          case (4)   ! uv
-            rhsu = -d1; rhsw = 0.0d0
-            expl = ialfa(ix)*d2 + ialfa(ix)*k2(iz, ix)*d0
-          case (5)   ! vw
-            rhsu = 0.0d0; rhsw = -d1
-            if (no_mean_vw .and. ix == 0 .and. iz == 0) rhsw = 0.0d0
-            expl = ibeta(iz)*d2 + ibeta(iz)*k2(iz, ix)*d0
-          case default   ! uw
-            rhsu = -ibeta(iz)*d0; rhsw = -ialfa(ix)*d0
-            expl = 2.0d0*ialfa(ix)*ibeta(iz)*d1
-          end select
-          rhs(iy, iz, ix, 2) = rhs(iy, iz, ix, 2) + ODE(2)*expl
-          oldrhs(iy, iz, ix, 2) = oldrhs(iy, iz, ix, 2) + expl
-          if (ix == 0 .and. iz == 0) then
-            e = dcmplx(dreal(rhsu), dreal(rhsw))
-          else
-            e = ibeta(iz)*rhsu - ialfa(ix)*rhsw
-          end if
-          rhs(iy, iz, ix, 1) = rhs(iy, iz, ix, 1) + ODE(2)*e
-          oldrhs(iy, iz, ix, 1) = oldrhs(iy, iz, ix, 1) + e
+          rhs(iy, iz, ix, 1) = r1; rhs(iy, iz, ix, 2) = r2
+          oldrhs(iy, iz, ix, 1) = o1; oldrhs(iy, iz, ix, 2) = o2
         end do
       end do
     end do

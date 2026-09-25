@@ -2,8 +2,9 @@
 !
 ! In spectral space (z-pencil) a rank owns the x modes nx0:nxN and every z
 ! mode; in physical space (x-pencil) it owns the z lines nz0:nzN and every x
-! point.  Moving between the two is one alltoall over all ranks.  Each rank
-! owns the whole of y (npy = 1); the ny0:nyN names are kept so that a y
+! point.  Moving between the two is one alltoall over all ranks, carrying
+! three fields at once (u, v, w, or three products).  Each rank owns the
+! whole of y (npy = 1); the ny0:nyN names are kept so that a y
 ! decomposition can be added later.
 !
 ! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery,
@@ -63,7 +64,7 @@ contains
     if (has_terminal) write (*, '(A,I5,A,I5,A,I5)') '   ranks =', nproc, '   nxB   =', nxB, '   nzB   =', nzB
 
     transpose_is_local = (nzB == nzd)
-    sendcount = nxB*nzB*(nyN - ny0 + 5)
+    sendcount = nxB*nzB*(nyN - ny0 + 5)*3          ! three fields per transpose
     !$omp target update to(sendcount)
     n = 1
     if (.not. transpose_is_local) n = int(npxz, C_SIZE_T)*int(sendcount, C_SIZE_T)
@@ -87,57 +88,63 @@ contains
   end subroutine free_mpi
 
   !------------------------------------------------------------------------
-  ! z-pencil Vz(iz, ix, iy)  <->  x-pencil Vx(ix, iz, iy)
+  ! z-pencil Vz(iz, ix, iy, m)  <->  x-pencil Vx(ix, iz, iy, m), m = 1..3
   !------------------------------------------------------------------------
 
   subroutine repack_zTOx_local(Vz, Vx)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
-    integer(C_SIZE_T) :: iy, ix, iz
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vz, 3)
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(Vz, Vx, ny_batch, nxB, nzd) private(iy, ix, iz)
-    do iy = 1, ny_batch
-      do ix = 1, nxB
-        do iz = 1, nzd
-          Vx(ix, iz, iy) = Vz(iz, ix, iy)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
+    integer(C_SIZE_T) :: iy, ix, iz, m
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vz, 3); nb = size(Vz, 4)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vz, Vx, ny_batch, nb, nxB, nzd) private(iy, ix, iz, m)
+    do m = 1, nb
+      do iy = 1, ny_batch
+        do ix = 1, nxB
+          do iz = 1, nzd
+            Vx(ix, iz, iy, m) = Vz(iz, ix, iy, m)
+          end do
         end do
       end do
     end do
   end subroutine repack_zTOx_local
 
   subroutine repack_xTOz_local(Vx, Vz)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
-    integer(C_SIZE_T) :: iy, ix, iz
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vx, 3)
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(Vx, Vz, ny_batch, nxB, nzd) private(iy, ix, iz)
-    do iy = 1, ny_batch
-      do iz = 1, nzd
-        do ix = 1, nxB
-          Vz(iz, ix, iy) = Vx(ix, iz, iy)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
+    integer(C_SIZE_T) :: iy, ix, iz, m
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vx, 3); nb = size(Vx, 4)
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(Vx, Vz, ny_batch, nb, nxB, nzd) private(iy, ix, iz, m)
+    do m = 1, nb
+      do iy = 1, ny_batch
+        do iz = 1, nzd
+          do ix = 1, nxB
+            Vz(iz, ix, iy, m) = Vx(ix, iz, iy, m)
+          end do
         end do
       end do
     end do
   end subroutine repack_xTOz_local
 
   subroutine pack_zTOx(Vz, send)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
     complex(C_DOUBLE_COMPLEX), intent(out) :: send(:)
-    integer(C_SIZE_T) :: iy, ix, iz, dest, p
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vz, 3)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vz, send, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, dest, p)
+    integer(C_SIZE_T) :: iy, ix, iz, m, dest, p
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vz, 3); nb = size(Vz, 4)
+    !$omp target teams distribute parallel do collapse(5) default(none) &
+    !$omp shared(Vz, send, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, dest, p)
     do dest = 0, npxz - 1
-      do iy = 1, ny_batch
-        do ix = 1, nxB
-          do iz = 1, nzB
-            p = dest*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1)
-            send(p) = Vz(dest*nzB + iz, ix, iy)
+      do m = 1, nb
+        do iy = 1, ny_batch
+          do ix = 1, nxB
+            do iz = 1, nzB
+              p = dest*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1) + nzB*nxB*ny_batch*(m - 1)
+              send(p) = Vz(dest*nzB + iz, ix, iy, m)
+            end do
           end do
         end do
       end do
@@ -146,18 +153,20 @@ contains
 
   subroutine unpack_zTOx(recv, Vx)
     complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
-    integer(C_SIZE_T) :: iy, ix, iz, src, p
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vx, 3)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vx, recv, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, src, p)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
+    integer(C_SIZE_T) :: iy, ix, iz, m, src, p
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vx, 3); nb = size(Vx, 4)
+    !$omp target teams distribute parallel do collapse(5) default(none) &
+    !$omp shared(Vx, recv, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, src, p)
     do src = 0, npxz - 1
-      do iy = 1, ny_batch
-        do ix = 1, nxB
-          do iz = 1, nzB
-            p = src*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1)
-            Vx(ix + src*nxB, iz, iy) = recv(p)
+      do m = 1, nb
+        do iy = 1, ny_batch
+          do ix = 1, nxB
+            do iz = 1, nzB
+              p = src*sendcount + iz + nzB*(ix - 1) + nzB*nxB*(iy - 1) + nzB*nxB*ny_batch*(m - 1)
+              Vx(ix + src*nxB, iz, iy, m) = recv(p)
+            end do
           end do
         end do
       end do
@@ -165,19 +174,21 @@ contains
   end subroutine unpack_zTOx
 
   subroutine pack_xTOz(Vx, send)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
     complex(C_DOUBLE_COMPLEX), intent(out) :: send(:)
-    integer(C_SIZE_T) :: iy, ix, iz, dest, p
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vx, 3)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vx, send, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, dest, p)
+    integer(C_SIZE_T) :: iy, ix, iz, m, dest, p
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vx, 3); nb = size(Vx, 4)
+    !$omp target teams distribute parallel do collapse(5) default(none) &
+    !$omp shared(Vx, send, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, dest, p)
     do dest = 0, npxz - 1
-      do iy = 1, ny_batch
-        do iz = 1, nzB
-          do ix = 1, nxB
-            p = dest*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1)
-            send(p) = Vx(dest*nxB + ix, iz, iy)
+      do m = 1, nb
+        do iy = 1, ny_batch
+          do iz = 1, nzB
+            do ix = 1, nxB
+              p = dest*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1) + nxB*nzB*ny_batch*(m - 1)
+              send(p) = Vx(dest*nxB + ix, iz, iy, m)
+            end do
           end do
         end do
       end do
@@ -186,18 +197,20 @@ contains
 
   subroutine unpack_xTOz(recv, Vz)
     complex(C_DOUBLE_COMPLEX), intent(in) :: recv(:)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
-    integer(C_SIZE_T) :: iy, ix, iz, src, p
-    integer(C_INT) :: ny_batch
-    ny_batch = size(Vz, 3)
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(Vz, recv, ny_batch, nxB, nzB, npxz, sendcount) private(iy, ix, iz, src, p)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
+    integer(C_SIZE_T) :: iy, ix, iz, m, src, p
+    integer(C_INT) :: ny_batch, nb
+    ny_batch = size(Vz, 3); nb = size(Vz, 4)
+    !$omp target teams distribute parallel do collapse(5) default(none) &
+    !$omp shared(Vz, recv, ny_batch, nb, nxB, nzB, npxz, sendcount) private(iy, ix, iz, m, src, p)
     do src = 0, npxz - 1
-      do iy = 1, ny_batch
-        do iz = 1, nzB
-          do ix = 1, nxB
-            p = src*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1)
-            Vz(iz + src*nzB, ix, iy) = recv(p)
+      do m = 1, nb
+        do iy = 1, ny_batch
+          do iz = 1, nzB
+            do ix = 1, nxB
+              p = src*sendcount + ix + nxB*(iz - 1) + nxB*nzB*(iy - 1) + nxB*nzB*ny_batch*(m - 1)
+              Vz(iz + src*nzB, ix, iy, m) = recv(p)
+            end do
           end do
         end do
       end do
@@ -221,8 +234,8 @@ contains
   end subroutine alltoall
 
   subroutine transpose_zTOx(Vz, Vx)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(1:, 1:, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vz(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
     if (transpose_is_local) then
       call repack_zTOx_local(Vz, Vx)
     else
@@ -233,8 +246,8 @@ contains
   end subroutine transpose_zTOx
 
   subroutine transpose_xTOz(Vx, Vz)
-    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(1:, 1:, :)
-    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(1:, 1:, :)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: Vx(:, :, :, :)
+    complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
     if (transpose_is_local) then
       call repack_xTOz_local(Vx, Vz)
     else

@@ -34,54 +34,57 @@ contains
   ! rhs(:, :, :, 1) for the right-hand side.
   subroutine compute_pressure(p)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: p(ny0 - 2:, -nz:, nx0:)
-    integer(C_INT) :: m, ix, iy, iz, j
+    integer(C_INT) :: g, ip, m, ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, term
     real(C_DOUBLE) :: pmean, pmean_global, s2now
     integer :: ierr
 
     s2now = s2_of(time)
     call transform_to_physical()
-    do m = 1, 6
-      call build_products(m)
+    do g = 1, 2
+      call build_products(g)
       call products_to_spectral()
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(rhs, VVdz, V, der, izd, ialfa, ibeta, S, s2now, m, nx0, nxN, nz, ny) &
-      !$omp private(ix, iy, iz, j, d0, d1, d2, term)
+      !$omp shared(rhs, VVdz, V, der, izd, ialfa, ibeta, S, s2now, g, nx0, nxN, nz, ny) &
+      !$omp private(ix, iy, iz, j, ip, m, d0, d1, d2, term)
       do ix = nx0, nxN
         do iz = -nz, nz
           do iy = 0, ny - 1
-            d0 = 0.0d0; d1 = 0.0d0; d2 = 0.0d0
-            do j = -2, 2
-              d0 = d0 + der(iy, 0, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
-              d1 = d1 + der(iy, 1, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
-              d2 = d2 + der(iy, 2, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j)
-            end do
-            select case (m)
-            case (1)   ! uu
-              term = -ialfa(ix)*ialfa(ix)*d0
-            case (2)   ! vv
-              term = -d2
-            case (3)   ! ww
-              term = -ibeta(iz)*ibeta(iz)*d0
-            case (4)   ! uv
-              term = -2.0d0*ialfa(ix)*d1
-            case (5)   ! vw
-              term = -2.0d0*ibeta(iz)*d1
-            case default   ! uw
-              term = -2.0d0*ialfa(ix)*ibeta(iz)*d0
-            end select
-            if (m == 1) then
-              ! first product: start the sum with the mean-shear term
-              d0 = 0.0d0
+            do ip = 1, 3
+              m = 3*(g - 1) + ip
+              d0 = 0.0d0; d1 = 0.0d0; d2 = 0.0d0
               do j = -2, 2
-                d0 = d0 + der(iy, 0, j)*V(iy + j, iz, ix, 2)
+                d0 = d0 + der(iy, 0, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, ip)
+                d1 = d1 + der(iy, 1, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, ip)
+                d2 = d2 + der(iy, 2, j)*VVdz(izd(iz) + 1, ix - nx0 + 1, iy + j, ip)
               end do
-              rhs(iy, iz, ix, 1) = term - 2.0d0*(S*ialfa(ix) + s2now*ibeta(iz))*d0
-            else
-              rhs(iy, iz, ix, 1) = rhs(iy, iz, ix, 1) + term
-            end if
-            ! mean mode: p_00 = -<vv>, the raw product, not its stencil
-            if (ix == 0 .and. iz == 0 .and. m == 2) rhs(iy, iz, ix, 1) = -dreal(VVdz(1, 1, iy))
+              select case (m)
+              case (1)   ! uu
+                term = -ialfa(ix)*ialfa(ix)*d0
+              case (2)   ! vv
+                term = -d2
+              case (3)   ! ww
+                term = -ibeta(iz)*ibeta(iz)*d0
+              case (4)   ! uv
+                term = -2.0d0*ialfa(ix)*d1
+              case (5)   ! vw
+                term = -2.0d0*ibeta(iz)*d1
+              case default   ! uw
+                term = -2.0d0*ialfa(ix)*ibeta(iz)*d0
+              end select
+              if (m == 1) then
+                ! first product: start the sum with the mean-shear term
+                d0 = 0.0d0
+                do j = -2, 2
+                  d0 = d0 + der(iy, 0, j)*V(iy + j, iz, ix, 2)
+                end do
+                rhs(iy, iz, ix, 1) = term - 2.0d0*(S*ialfa(ix) + s2now*ibeta(iz))*d0
+              else
+                rhs(iy, iz, ix, 1) = rhs(iy, iz, ix, 1) + term
+              end if
+              ! mean mode: p_00 = -<vv>, the raw product, not its stencil
+              if (ix == 0 .and. iz == 0 .and. m == 2) rhs(iy, iz, ix, 1) = -dreal(VVdz(1, 1, iy, ip))
+            end do
           end do
         end do
       end do

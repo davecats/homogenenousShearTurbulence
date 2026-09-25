@@ -1,5 +1,6 @@
-! Fourier transforms in z (complex, in place) and in x (real <-> complex),
-! batched over all y rows, and the four buffers they run in.
+! Fourier transforms in z (complex, in place) and in x (real <-> complex, in
+! place), batched over all y rows and over the three fields of a buffer, and
+! the buffers they run in.
 !
 ! Two backends, chosen at compile time:
 !   HAVE_FFTW  FFTW3 on the host
@@ -8,10 +9,17 @@
 ! This file and hst_mpi.f90 are the only ones that name a vendor library.
 ! An AMD backend (hipFFT) goes here as a third block.
 !
-!   VVdz(iz, ix, iy)      z-pencil, padded to nzd, complex
-!   VVdx(ix, iz, iy)      x-pencil, nxd+1 complex x modes
-!   rVVdx(ix, iz, iy, 3)  physical space, 2*(nxd+1) reals in x (padded), u v w
-!   products(ix, iz, iy)  one product of two velocity components, physical
+!   VVdz(iz, ix, iy, m)     z-pencil, padded to nzd, complex; m = u, v, w or three products
+!   VVdx(ix, iz, iy, m)     x-pencil, nxd+1 complex x modes of u, v, w ...
+!   rVVdx(ix, iz, iy, m)    ... and the same bytes seen as 2(nxd+1) real x points
+!   VVdp, products          the same pair for three products
+!
+! The x transforms run in place: a row of nxd+1 complex modes and a row of
+! 2(nxd+1) reals are the same bytes (the padded in-place layout of FFTW and
+! cuFFT), and the real names are pointer views of the complex buffers.  On
+! the device a view is found through the mapping of the buffer it points
+! into.  Three fields per transform and per transpose: the u, v, w of a
+! substep, or three of the six products.
 !
 ! From channel/src/fft/ffts.fypp with HIP, the byte workspace and the
 ! double buffers for overlapped communication removed.
@@ -28,10 +36,10 @@ module hst_fft
   private
 
   public :: init_fft, free_fft, FFT, IFT, RFT, HFT, device_sync
-  public :: VVdz, VVdx, rVVdx, products
+  public :: VVdz, VVdx, rVVdx, VVdp, products
 
-  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: VVdz(:, :, :), VVdx(:, :, :)
-  real(C_DOUBLE), allocatable, target, save :: rVVdx(:, :, :, :), products(:, :, :)
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: VVdz(:, :, :, :), VVdx(:, :, :, :), VVdp(:, :, :, :)
+  real(C_DOUBLE), pointer, save :: rVVdx(:, :, :, :), products(:, :, :, :)
   integer(C_INT), save :: fft_y0, fft_yN, fft_ny
 
 #ifdef HAVE_FFTW
@@ -48,7 +56,7 @@ contains
   subroutine init_fft()
     integer :: istat
 #ifdef HAVE_FFTW
-    integer(C_INT), dimension(1) :: n_z, n_x, rn_x
+    integer(C_INT), dimension(1) :: n_z, n_x, e_c, e_r
 #endif
 #ifdef HAVE_CUDA
     integer, dimension(1) :: n, inembed, onembed
@@ -57,36 +65,34 @@ contains
     fft_yN = nyN + 2
     fft_ny = fft_yN - fft_y0 + 1
 
-    allocate (VVdz(nzd, nxB, fft_y0:fft_yN))
-    allocate (VVdx(nxd + 1, nzB, fft_y0:fft_yN))
-    allocate (rVVdx(2*(nxd + 1), nzB, fft_y0:fft_yN, 3))
-    allocate (products(2*(nxd + 1), nzB, fft_y0:fft_yN))
-    VVdz = 0; VVdx = 0; rVVdx = 0; products = 0
-    !$omp target enter data map(to: VVdz, VVdx, rVVdx, products)
+    allocate (VVdz(nzd, nxB, fft_y0:fft_yN, 3))
+    allocate (VVdx(nxd + 1, nzB, fft_y0:fft_yN, 3), VVdp(nxd + 1, nzB, fft_y0:fft_yN, 3))
+    VVdz = 0; VVdx = 0; VVdp = 0
+    call c_f_pointer(c_loc(VVdx), rVVdx, [2*(nxd + 1), nzB, fft_ny, 3])
+    call c_f_pointer(c_loc(VVdp), products, [2*(nxd + 1), nzB, fft_ny, 3])
+    rVVdx(1:, 1:, fft_y0:, 1:) => rVVdx
+    products(1:, 1:, fft_y0:, 1:) => products
+    !$omp target enter data map(to: VVdz, VVdx, VVdp)
 
 #ifdef HAVE_FFTW
-    n_z = [nzd]; n_x = [nxd]; rn_x = [2*nxd]
-    pFFT = fftw_plan_many_dft(1, n_z, nxB, VVdz(:, :, fft_y0), n_z, 1, nzd, &
-                              VVdz(:, :, fft_y0), n_z, 1, nzd, FFTW_FORWARD, plan_type)
-    pIFT = fftw_plan_many_dft(1, n_z, nxB, VVdz(:, :, fft_y0), n_z, 1, nzd, &
-                              VVdz(:, :, fft_y0), n_z, 1, nzd, FFTW_BACKWARD, plan_type)
-    pRFT = fftw_plan_many_dft_c2r(1, rn_x, nzB, VVdx(:, :, fft_y0), n_x + 1, 1, nxd + 1, &
-                                  rVVdx(:, :, fft_y0, 1), 2*(n_x + 1), 1, 2*(nxd + 1), plan_type)
-    pHFT = fftw_plan_many_dft_r2c(1, rn_x, nzB, rVVdx(:, :, fft_y0, 1), 2*(n_x + 1), 1, 2*(nxd + 1), &
-                                  VVdx(:, :, fft_y0), n_x + 1, 1, nxd + 1, plan_type)
+    n_z = [nzd]; n_x = [2*nxd]; e_c = [nxd + 1]; e_r = [2*(nxd + 1)]
+    pFFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny*3, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_FORWARD, plan_type)
+    pIFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny*3, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_BACKWARD, plan_type)
+    pRFT = fftw_plan_many_dft_c2r(1, n_x, nzB*fft_ny*3, VVdx, e_c, 1, nxd + 1, rVVdx, e_r, 1, 2*(nxd + 1), plan_type)
+    pHFT = fftw_plan_many_dft_r2c(1, n_x, nzB*fft_ny*3, products, e_r, 1, 2*(nxd + 1), VVdp, e_c, 1, nxd + 1, plan_type)
     istat = 0
 #endif
 #ifdef HAVE_CUDA
-    istat = cufftPlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB)
+    istat = cufftPlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3)
     call check(istat, 'cufftPlan1d IFT')
-    istat = cufftPlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB)
+    istat = cufftPlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3)
     call check(istat, 'cufftPlan1d FFT')
     n(1) = 2*nxd
     inembed(1) = nxd + 1
     onembed(1) = 2*(nxd + 1)
-    istat = cufftPlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny)
+    istat = cufftPlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny*3)
     call check(istat, 'cufftPlanMany RFT')
-    istat = cufftPlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny)
+    istat = cufftPlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny*3)
     call check(istat, 'cufftPlanMany HFT')
 #endif
   end subroutine init_fft
@@ -102,8 +108,9 @@ contains
     istat = cufftDestroy(cu_pFFT); istat = cufftDestroy(cu_pIFT)
     istat = cufftDestroy(cu_pRFT); istat = cufftDestroy(cu_pHFT)
 #endif
-    !$omp target exit data map(delete: VVdz, VVdx, rVVdx, products)
-    deallocate (VVdz, VVdx, rVVdx, products)
+    !$omp target exit data map(delete: VVdz, VVdx, VVdp)
+    nullify (rVVdx, products)
+    deallocate (VVdz, VVdx, VVdp)
   end subroutine free_fft
 
   ! Wait for everything queued on the device (the timer's boundaries).
@@ -123,82 +130,63 @@ contains
     end if
   end subroutine check
 
-  ! Complex transform along z, in place, forward (FFT) or backward (IFT).
-  subroutine FFT(x)
-    complex(C_DOUBLE_COMPLEX), intent(inout), target :: x(:, :, ny0 - 2:)
-    integer :: i, istat, y0
-    y0 = lbound(x, 3)
+  ! Complex transform of VVdz along z, in place: forward (FFT) or backward (IFT).
+  subroutine FFT()
+    integer :: istat
 #ifdef HAVE_FFTW
-    do i = fft_y0, fft_yN
-      call fftw_execute_dft(pFFT, x(:, :, i), x(:, :, i))
-    end do
+    call fftw_execute_dft(pFFT, VVdz, VVdz)
 #endif
 #ifdef HAVE_CUDA
-    !$omp target data use_device_addr(x)
+    !$omp target data use_device_addr(VVdz)
     istat = cudaDeviceSynchronize()
-    istat = cufftExecZ2Z(cu_pFFT, x(1, 1, y0), x(1, 1, y0), CUFFT_FORWARD)
+    istat = cufftExecZ2Z(cu_pFFT, VVdz, VVdz, CUFFT_FORWARD)
     call check(istat, 'cufftExecZ2Z FFT')
     istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine FFT
 
-  subroutine IFT(x)
-    complex(C_DOUBLE_COMPLEX), intent(inout), target :: x(:, :, ny0 - 2:)
-    integer :: i, istat, y0
-    y0 = lbound(x, 3)
+  subroutine IFT()
+    integer :: istat
 #ifdef HAVE_FFTW
-    do i = fft_y0, fft_yN
-      call fftw_execute_dft(pIFT, x(:, :, i), x(:, :, i))
-    end do
+    call fftw_execute_dft(pIFT, VVdz, VVdz)
 #endif
 #ifdef HAVE_CUDA
-    !$omp target data use_device_addr(x)
+    !$omp target data use_device_addr(VVdz)
     istat = cudaDeviceSynchronize()
-    istat = cufftExecZ2Z(cu_pIFT, x(1, 1, y0), x(1, 1, y0), CUFFT_INVERSE)
+    istat = cufftExecZ2Z(cu_pIFT, VVdz, VVdz, CUFFT_INVERSE)
     call check(istat, 'cufftExecZ2Z IFT')
     istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine IFT
 
-  ! Complex x modes -> real x points (RFT) and back (HFT).
-  subroutine RFT(x, rx)
-    complex(C_DOUBLE_COMPLEX), intent(inout), target :: x(:, :, ny0 - 2:)
-    real(C_DOUBLE), intent(inout), target :: rx(:, :, ny0 - 2:)
-    integer :: i, istat, x_y0, rx_y0
-    x_y0 = lbound(x, 3)
-    rx_y0 = lbound(rx, 3)
+  ! Complex x modes of VVdx -> real x points rVVdx (RFT), and the real
+  ! products -> complex modes VVdp (HFT), both in place.
+  subroutine RFT()
+    integer :: istat
 #ifdef HAVE_FFTW
-    do i = fft_y0, fft_yN
-      call fftw_execute_dft_c2r(pRFT, x(:, :, i), rx(:, :, i))
-    end do
+    call fftw_execute_dft_c2r(pRFT, VVdx, rVVdx)
 #endif
 #ifdef HAVE_CUDA
-    !$omp target data use_device_addr(x, rx)
+    !$omp target data use_device_addr(VVdx)
     istat = cudaDeviceSynchronize()
-    istat = cufftExecZ2D(cu_pRFT, x(1, 1, x_y0), rx(1, 1, rx_y0))
+    istat = cufftExecZ2D(cu_pRFT, VVdx, VVdx)
     call check(istat, 'cufftExecZ2D RFT')
     istat = cudaDeviceSynchronize()
     !$omp end target data
 #endif
   end subroutine RFT
 
-  subroutine HFT(rx, x)
-    real(C_DOUBLE), intent(inout), target :: rx(:, :, ny0 - 2:)
-    complex(C_DOUBLE_COMPLEX), intent(inout), target :: x(:, :, ny0 - 2:)
-    integer :: i, istat, x_y0, rx_y0
-    x_y0 = lbound(x, 3)
-    rx_y0 = lbound(rx, 3)
+  subroutine HFT()
+    integer :: istat
 #ifdef HAVE_FFTW
-    do i = fft_y0, fft_yN
-      call fftw_execute_dft_r2c(pHFT, rx(:, :, i), x(:, :, i))
-    end do
+    call fftw_execute_dft_r2c(pHFT, products, VVdp)
 #endif
 #ifdef HAVE_CUDA
-    !$omp target data use_device_addr(rx, x)
+    !$omp target data use_device_addr(VVdp)
     istat = cudaDeviceSynchronize()
-    istat = cufftExecD2Z(cu_pHFT, rx(1, 1, rx_y0), x(1, 1, x_y0))
+    istat = cufftExecD2Z(cu_pHFT, VVdp, VVdp)
     call check(istat, 'cufftExecD2Z HFT')
     istat = cudaDeviceSynchronize()
     !$omp end target data

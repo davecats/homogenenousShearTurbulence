@@ -4,11 +4,14 @@
 !   dealiased physical grid, all rows -2..ny+1 (the ghost rows included, so
 !   that products in the ghost rows are the shear-periodic images of the
 !   products, which is what the stencils near the box edges need).
-! build_products(m) + products_to_spectral: one product of two components
-!   back to spectral space, left in VVdz for the caller to accumulate.
+! build_products(g) + products_to_spectral: three of the six products
+!   (group 1: uu, vv, ww; group 2: uv, vw, uw) back to spectral space, left
+!   in VVdz(:, :, :, 1:3) for the caller to accumulate.
 ! compute_cfl: read off rVVdx while it exists.
 !
-! From channel/src/numerics/channel_transforms.f90 without the overlapped
+! Every transform and transpose carries three fields at once: one cuFFT
+! call and one alltoall instead of three.  From
+! channel/src/numerics/channel_transforms.f90 without the overlapped
 ! double buffering.
 module hst_transforms
 
@@ -23,25 +26,26 @@ module hst_transforms
 
 contains
 
-  ! V(:, :, :, m) into the z-padded pencil: modes 0..nz first, then zeros,
-  ! then -nz..-1 at the end (izd does this index map).
-  subroutine assemble_vvdz(m)
-    integer(C_INT), intent(in) :: m
-    integer(C_INT) :: i, j, k, y_first, y_last
+  ! V into the z-padded pencil: modes 0..nz first, then zeros, then -nz..-1
+  ! at the end (izd does this index map).
+  subroutine assemble_vvdz()
+    integer(C_INT) :: i, j, k, m, y_first, y_last
     y_first = ny0 - 2
     y_last = nyN + 2
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, VVdz, nx0, nxN, nz, nzd, y_first, y_last, m) private(i, j, k)
-    do i = y_first, y_last
-      do j = nx0, nxN
-        do k = 1, nzd
-          if (k <= nz + 1) then
-            VVdz(k, j - nx0 + 1, i) = V(i, k - 1, j, m)
-          else if (k <= nzd - nz) then
-            VVdz(k, j - nx0 + 1, i) = 0.0d0
-          else
-            VVdz(k, j - nx0 + 1, i) = V(i, k - nzd - 1, j, m)
-          end if
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(V, VVdz, nx0, nxN, nz, nzd, y_first, y_last) private(i, j, k, m)
+    do m = 1, 3
+      do i = y_first, y_last
+        do j = nx0, nxN
+          do k = 1, nzd
+            if (k <= nz + 1) then
+              VVdz(k, j - nx0 + 1, i, m) = V(i, k - 1, j, m)
+            else if (k <= nzd - nz) then
+              VVdz(k, j - nx0 + 1, i, m) = 0.0d0
+            else
+              VVdz(k, j - nx0 + 1, i, m) = V(i, k - nzd - 1, j, m)
+            end if
+          end do
         end do
       end do
     end do
@@ -50,72 +54,77 @@ contains
   ! The x modes above nx are padding for the 3/2 rule: zero them before the
   ! real transform.
   subroutine zero_vvdx_padding()
-    integer(C_INT) :: i, j, k, y_first, y_last
+    integer(C_INT) :: i, j, k, m, y_first, y_last
     y_first = ny0 - 2
     y_last = nyN + 2
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(VVdx, nx, nxd, nzB, y_first, y_last) private(i, j, k)
-    do i = y_first, y_last
-      do j = 1, nzB
-        do k = nx + 2, nxd + 1
-          VVdx(k, j, i) = 0.0d0
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(VVdx, nx, nxd, nzB, y_first, y_last) private(i, j, k, m)
+    do m = 1, 3
+      do i = y_first, y_last
+        do j = 1, nzB
+          do k = nx + 2, nxd + 1
+            VVdx(k, j, i, m) = 0.0d0
+          end do
         end do
       end do
     end do
   end subroutine zero_vvdx_padding
 
   subroutine transform_to_physical()
-    integer(C_INT) :: m
-    do m = 1, 3
-      call assemble_vvdz(m)
-      call IFT(VVdz)
-      call transpose_zTOx(VVdz, VVdx)
-      call zero_vvdx_padding()
-      call RFT(VVdx, rVVdx(:, :, :, m))
-    end do
+    call assemble_vvdz()
+    call IFT()
+    call transpose_zTOx(VVdz, VVdx)
+    call zero_vvdx_padding()
+    call RFT()
   end subroutine transform_to_physical
 
-  ! products = a*b*factor with (a, b) = uu, vv, ww, uv, vw, uw for m = 1..6.
-  ! factor = 1/(2 nxd nzd) is the normalisation of the inverse transforms.
-  subroutine build_products(m)
-    integer(C_INT), intent(in) :: m
-    integer(C_INT) :: i, j, k, a, b, y_first, y_last
-    integer(C_INT), parameter :: first(6) = [1, 2, 3, 1, 2, 1], second(6) = [1, 2, 3, 2, 3, 3]
+  ! products(:, :, :, p) = a*b*factor, p = 1..3, with (a, b) = uu, vv, ww for
+  ! group 1 and uv, vw, uw for group 2.  factor = 1/(2 nxd nzd) is the
+  ! normalisation of the inverse transforms.
+  subroutine build_products(g)
+    integer(C_INT), intent(in) :: g
+    integer(C_INT) :: i, j, k, p, a, b, y_first, y_last
     y_first = ny0 - 2
     y_last = nyN + 2
-    a = first(m)
-    b = second(m)
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor, a, b) private(i, j, k)
-    do i = y_first, y_last
-      do j = 1, nzB
-        do k = 1, 2*nxd
-          products(k, j, i) = rVVdx(k, j, i, a)*rVVdx(k, j, i, b)*factor
+    !$omp target teams distribute parallel do collapse(4) default(none) &
+    !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor, g) private(i, j, k, p, a, b)
+    do p = 1, 3
+      do i = y_first, y_last
+        do j = 1, nzB
+          do k = 1, 2*nxd
+            if (g == 1) then
+              a = p; b = p                      ! uu, vv, ww
+            else
+              a = merge(1, 2, p /= 2); b = min(p + 1, 3)   ! uv, vw, uw
+            end if
+            products(k, j, i, p) = rVVdx(k, j, i, a)*rVVdx(k, j, i, b)*factor
+          end do
         end do
       end do
     end do
   end subroutine build_products
 
   ! products (physical) -> VVdz (spectral z-pencil).  The result for mode
-  ! (iz, ix) is VVdz(izd(iz) + 1, ix - nx0 + 1, iy).
+  ! (iz, ix) of product p is VVdz(izd(iz) + 1, ix - nx0 + 1, iy, p).
   subroutine products_to_spectral()
-    call HFT(products, VVdx)
-    call transpose_xTOz(VVdx, VVdz)
-    call FFT(VVdz)
+    call HFT()
+    call transpose_xTOz(VVdp, VVdz)
+    call FFT()
   end subroutine products_to_spectral
 
-  ! Unpack VVdz into a field with the layout of V(:, :, :, 1).
-  subroutine vvdz_to_field(field)
+  ! Unpack VVdz(:, :, :, m) into a field with the layout of V(:, :, :, 1).
+  subroutine vvdz_to_field(field, m)
     complex(C_DOUBLE_COMPLEX), intent(out) :: field(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN)
+    integer(C_INT), intent(in) :: m
     integer(C_INT) :: ix, iy, iz, y_first, y_last
     y_first = ny0 - 2
     y_last = nyN + 2
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(VVdz, izd, field, nx0, nxN, nz, y_first, y_last) private(ix, iy, iz)
+    !$omp shared(VVdz, izd, field, nx0, nxN, nz, y_first, y_last, m) private(ix, iy, iz)
     do ix = nx0, nxN
       do iy = y_first, y_last
         do iz = -nz, nz
-          field(iy, iz, ix) = VVdz(izd(iz) + 1, ix - nx0 + 1, iy)
+          field(iy, iz, ix) = VVdz(izd(iz) + 1, ix - nx0 + 1, iy, m)
         end do
       end do
     end do
