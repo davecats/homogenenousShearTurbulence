@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Read and compare hst / CPL field files.
 
-   compare_fields.py A [B]
+   compare_fields.py A [B [tol]]
+
+With a third argument the exit status is 1 when the relative difference
+exceeds tol (for scripts).
 
 Velocity files (Dati.cart.out, fields/field<n>.fld): CPL text header up to
 "Vfield=\\n", then the array (0..nx, -ny_cpl..ny_cpl, -1..nz_cpl+1) of
@@ -52,3 +55,6 @@ if len(sys.argv) > 2:
     d = np.abs(a[:, :, 2:-2] - b[:, :, 2:-2]).max()
     m = np.abs(a).max()
     print(f"time {ta} vs {tb}:  max |A-B| = {d:.3e}   max |A| = {m:.3e}   relative {d/m:.3e}")
+    if len(sys.argv) > 3 and d/m > float(sys.argv[3]):
+        print("FAILED")
+        sys.exit(1)

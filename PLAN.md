@@ -538,6 +538,7 @@ the RK start-up transient, with eps from the compact derivatives.
 | WP4 HoreKA jobs and timings | done; 256^3 0.145 s/step and 512^3 0.99 s/step on 4 A100 (README) |
 | WP5 validation against hst-main and Sekimoto et al. | done (section 8) |
 | WP6 y decomposition, NCCL | not started |
+| cleanup and performance session | prepared: NEXT_SESSION.md, tests/regression.sh with references |
 
 Performance note: the small default deck (64x128x64) runs at 0.18 s/step
 on the RTX 3060, only 7x faster than 256^3, so small grids are launch- and

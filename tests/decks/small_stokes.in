@@ -1,0 +1,6 @@
+! Regression deck: turbulence with a Stokes layer on the stretched grid, 50 steps
+! (dt = 5e-4: the CFL number is 0.6; 2e-3 blows up on this grid, layer or not).
+&mesh  nx = 15, ny = 64, nz = 15, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0, ystretch = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., sl_amplitude = 0.5, sl_period = 0.5, sl_delta = 0.05, sl_start = 0.0 /
+&time_control  deltat = 0.0005, cflmax = 0.0, t_max = 0.025, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /

@@ -1,0 +1,5 @@
+! Regression deck: small.in with exact_shift and an oscillating spanwise shear S2.
+&mesh  nx = 15, ny = 32, nz = 15, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., exact_shift = .true., s2_amplitude = 0.6, s2_period = 0.5, s2_start = 0.0 /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.1, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
