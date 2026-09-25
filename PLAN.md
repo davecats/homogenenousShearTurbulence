@@ -596,3 +596,27 @@ statistics: dx/eta = 2.0, dy/eta = 1.0, dz/eta = 0.3, i.e. x is the coarse
 direction; for a production run in this box choose nx about 3 nz (e.g.
 nx = 191, nz = 63, ny = 128).  Snapshots and pressure files were written
 every 20 time units.
+
+---
+
+## 10. Wished features (not yet implemented)
+
+- **Unsteady spanwise shear `S2`** (`S2data.cpl`): a second, time-dependent
+  mean-shear component `dW/dy = S2(t)` with its own shear-periodic
+  displacement `gamma_y`.  Touches the wrap phase (it becomes
+  `exp(-i (kx gamma_x + kz gamma_y))`), `shear_shift` (phase
+  `exp(-i (kx S + kz S2) y dt)`), the tilting term (`+ S2 i alfa D0 v`),
+  and the deck (`A`, `T`, `t0`).
+- **Stokes layer and its body force** (`SLdata.cpl`): a prescribed
+  oscillating spanwise profile `w(y, t)` localised at mid-box, imposed on
+  the mean mode, plus the equivalent body force `fy(y, t)` on the mean
+  `w` equation; needs the stretched grid (`htcoeff`) to resolve the layer,
+  which the stencil code already supports.
+- **CPL-compatible files**: write `fields/fieldN.fld` and `Dati.cart.out`
+  in the CPL layout (option), read CPL fields directly, and mirror the
+  `Runtimedata` / `variances_runtime.dat` columns, so the CPL post-processing
+  chain works unchanged.
+- **Pressure cadence**: the pressure is already computed only at snapshot
+  times (`dt_field`); a separate `dt_pressure` would decouple the two.
+- **y decomposition and NCCL transport** (section 7, WP6), and the
+  small-grid performance pass (section 9).
