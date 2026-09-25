@@ -18,9 +18,9 @@
 # Sources in dependency order (each file only uses the ones above it).
 SRC = src/hst_params.f90 \
       src/hst_input.f90 \
-      src/hst_mpi.f90 \
       src/hst_fft.f90 \
       src/hst_timer.f90 \
+      src/hst_mpi.f90 \
       src/hst_setup.f90 \
       src/hst_transforms.f90 \
       src/hst_initial.f90 \
@@ -90,7 +90,7 @@ $(BUILD):
 
 # Module dependencies (so that `make -j` stays correct).
 $(BUILD)/hst_input.o:      $(BUILD)/hst_params.o
-$(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o
+$(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o $(BUILD)/hst_timer.o
 $(BUILD)/hst_fft.o:        $(BUILD)/hst_params.o
 $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_timer.o:      $(BUILD)/hst_params.o $(BUILD)/hst_fft.o

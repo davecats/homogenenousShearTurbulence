@@ -16,13 +16,17 @@ module hst_timer
   implicit none
   private
   public :: tic, toc, timer_report
-  public :: T_TRANSFORM, T_PREPARE, T_PRODUCTS, T_SHIFT, T_SOLVE, T_RECOVER, T_OTHER
+  public :: T_TRANSFORM, T_PACK, T_ALLTOALL, T_PREPARE, T_PRODUCTS, T_SHIFT, T_SOLVE, T_RECOVER, T_OTHER
 
-  integer, parameter :: T_TRANSFORM = 1, T_PREPARE = 2, T_PRODUCTS = 3, T_SHIFT = 4, T_SOLVE = 5, &
-                        T_RECOVER = 6, T_OTHER = 7, NPHASE = 7
+  ! The two transpose phases are charged from inside hst_mpi, so the
+  ! transform and product phases are the FFTs and kernels around them.  On
+  ! one rank "pack, unpack" is the local repack and there is no alltoall.
+  integer, parameter :: T_TRANSFORM = 1, T_PACK = 2, T_ALLTOALL = 3, T_PREPARE = 4, T_PRODUCTS = 5, &
+                        T_SHIFT = 6, T_SOLVE = 7, T_RECOVER = 8, T_OTHER = 9, NPHASE = 9
   character(len=24), parameter :: names(NPHASE) = [character(len=24) :: &
-    'transform to physical', 'buildrhs_prepare', 'products + buildrhs', 'shear_shift', &
-    'implicit solves', 'ghosts, dv/dy, u and w', 'statistics, I/O, rest']
+    'to physical: FFTs, CFL', 'transpose pack, unpack', 'transpose alltoall', 'buildrhs_prepare', &
+    'products, FFTs, buildrhs', 'shear_shift', 'implicit solves', 'ghosts, dv/dy, u and w', &
+    'statistics, I/O, rest']
   real(C_DOUBLE), save :: acc(NPHASE) = 0.0d0, t_last = 0.0d0
 
 contains

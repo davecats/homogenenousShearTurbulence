@@ -17,6 +17,7 @@ module hst_mpi
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
+  use hst_timer, only: toc, T_PACK, T_ALLTOALL
 
   implicit none
   private
@@ -238,10 +239,14 @@ contains
     complex(C_DOUBLE_COMPLEX), intent(out) :: Vx(:, :, :, :)
     if (transpose_is_local) then
       call repack_zTOx_local(Vz, Vx)
+      call toc(T_PACK)
     else
       call pack_zTOx(Vz, sendbuf)
+      call toc(T_PACK)
       call alltoall()
+      call toc(T_ALLTOALL)
       call unpack_zTOx(recvbuf, Vx)
+      call toc(T_PACK)
     end if
   end subroutine transpose_zTOx
 
@@ -250,10 +255,14 @@ contains
     complex(C_DOUBLE_COMPLEX), intent(out) :: Vz(:, :, :, :)
     if (transpose_is_local) then
       call repack_xTOz_local(Vx, Vz)
+      call toc(T_PACK)
     else
       call pack_xTOz(Vx, sendbuf)
+      call toc(T_PACK)
       call alltoall()
+      call toc(T_ALLTOALL)
       call unpack_xTOz(recvbuf, Vz)
+      call toc(T_PACK)
     end if
   end subroutine transpose_xTOz
 
