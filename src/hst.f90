@@ -56,6 +56,7 @@ program hst
   call init_fft()
   call init_linsolve()
   call setup_derivatives()
+  call make_output_dirs()
   call restart_read('Dati.cart.out')
   !$omp target update to(V)
   do m = 1, 3
@@ -68,9 +69,9 @@ program hst
   call transform_to_physical()
   call compute_cfl()
   call new_timestep()
-  ifield = floor((time + 0.5d0*deltat)/dt_field)
-  if (has_terminal) write (*, '(A)') '        time       deltat       cfl             q2            eps' // &
-    '             uv             uu             vv             ww'
+  ifield = floor(time/dt_field)          ! CPL numbering: fields/field<ifield+1>.fld is the next one
+  if (has_terminal) write (*, '(A)') '        time       deltat       cfl         energy           diss' // &
+    '           uw/2           vw/2      (CPL Runtimedata columns 10-13)'
   call outstats()
 
   !--------------------------------------------------------- time loop ----
@@ -83,11 +84,11 @@ program hst
     if (crossed(dt_stat)) call outstats()
     if (crossed(dt_field)) then
       ifield = ifield + 1
-      write (fname, '(A,I0,A)') 'Dati.cart.', ifield, '.out'
+      write (fname, '(A,I0,A)') 'fields/field', ifield, '.fld'
       if (has_terminal) print '(A,F12.5)', '   writing '//trim(fname)//' at time', time
       !$omp target update from(V)
       call restart_write(trim(fname))
-      write (fname, '(A,I0,A)') 'Dati.cart.', ifield, '.p.out'
+      write (fname, '(A,I0,A)') 'p_fields/pField', ifield, '.fld'
       call write_pressure(trim(fname))
     end if
     if (crossed(dt_save)) then

@@ -61,22 +61,32 @@ sbatch ~/hst/jobs/horeka_gpu.slurm           # HoreKA, 1 node, 4 GPUs
 ```
 
 If `Dati.cart.out` exists it is read (with `time_from_restart = .true.`
-the clock too); otherwise a seeded, divergence-free random field is
-generated (`&init`).
+the clock too); a field written by the CPL code works as well.  Otherwise
+a seeded, divergence-free random field is generated (`&init`).
 
 ## Output
 
-- `Runtimedata`: one line per `dt_stat`:
-  `time deltat cfl q2 eps uv uu vv ww`, box averages of the fluctuations
-  (`q2 = <u_i u_i>`, `eps` the dissipation, then the Reynolds stresses).
-- `Dati.cart.out`: restart file, every `dt_save` and at the end.
-- `Dati.cart.<i>.out`: velocity snapshots every `dt_field`, and
-  `Dati.cart.<i>.p.out` the pressure at the same time.
+All files are in the layout of the CPL code `hst-main`, so its
+post-processing chain (`postprocess/`, `pressure_reconstruction/`) reads
+them unchanged, and its fields can be used as restart files here.
 
-File format (`src/hst_io.f90`): 3 int32 `nx ny nz`, 6 float64
-`alfa0 beta0 ly re S time`, then the complex128 array `(ny, 2nz+1, nx+1, 3)`
-of the `(u, v, w)` modes in Fortran order (the pressure file has one
-component).  `tests/compare_fields.py` reads it.
+- `Runtimedata`: one line per `dt_stat` with the CPL columns
+  `time meanflowx meanflowy S S2 gamma_x gamma_y deltat cfl energy diss uw/2 vw/2`
+  (integrals over the box height: `energy = ly/2 <u_i u_i>`,
+  `diss = ly/2 <grad u : grad u>` without `nu`, computed here from the
+  compact derivatives; CPL naming, so `uw/2` is `ly/2 <u v>` in our axes).
+- `variances_runtime.dat`: `time uu vv ww uv` (CPL naming, `ly <..>`).
+- `Dati.cart.out`: restart file, every `dt_save` and at the end.
+- `fields/field<n>.fld`: velocity snapshots every `dt_field`;
+  `p_fields/pField<n>.fld`: the pressure at the same times.  The two
+  directories are created at start-up.
+
+File layout (`src/hst_io.f90`): the CPL text header up to `Vfield=`, then
+the complex128 array `(0..nx, -ny_cpl..ny_cpl, -1..nz_cpl+1)` of `(u, v, w)`
+in C order with the four ghost rows, in CPL names (`ny_cpl` = our `nz`,
+`nz_cpl` = our `ny + 1`, their `(v, w)` = our `(w, v)`).  Pressure files
+are the same array without header and with one component.
+`tests/compare_fields.py` reads both.
 
 ## Tests
 

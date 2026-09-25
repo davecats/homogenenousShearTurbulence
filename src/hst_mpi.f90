@@ -21,15 +21,16 @@ module hst_mpi
   private
 
   public :: setup_decomposition, free_mpi, transpose_zTOx, transpose_xTOz
-  public :: file_view_type, memory_type, file_view_type1, memory_type1
+  public :: cpl_view_type, cpl_pview_type
 
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: sendbuf(:), recvbuf(:)
   integer(C_INT), save :: sendcount
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
-  ! MPI-IO: how the field of this rank sits in the file and in memory.
-  type(MPI_Datatype), save :: file_view_type, memory_type        ! three components
-  type(MPI_Datatype), save :: file_view_type1, memory_type1      ! one component (pressure)
+  ! MPI-IO views of this rank's x slab in a CPL-layout file (see hst_io):
+  ! the file array is (3, ny+4, 2nz+1, nx+1) in Fortran order for the
+  ! velocity and (ny+4, 2nz+1, nx+1) for the pressure.
+  type(MPI_Datatype), save :: cpl_view_type, cpl_pview_type
   integer :: ierr
 
 contains
@@ -38,7 +39,6 @@ contains
   ! and nzB = nzd/nproc z lines in physical space.  The alltoall needs both
   ! splits to be even.
   subroutine setup_decomposition()
-    integer :: ndims
     integer(C_SIZE_T) :: n
 
     npxz = nproc
@@ -71,31 +71,19 @@ contains
     sendbuf = 0; recvbuf = 0
     !$omp target enter data map(alloc: sendbuf, recvbuf)
 
-    ! The file holds rows 0..ny-1 (no ghost rows) of every mode and component:
-    ! a [ny, 2nz+1, nx+1, 3] complex array.  This rank writes its x slab from
-    ! V(-2:ny+1, -nz:nz, nx0:nxN, 1:3), skipping the ghost rows.
-    ndims = 4
-    call MPI_Type_create_subarray(ndims, [ny, 2*nz + 1, nx + 1, 3], [ny, 2*nz + 1, nxB, 3], &
-                                  [0, 0, nx0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, file_view_type, ierr)
-    call MPI_Type_commit(file_view_type, ierr)
-    call MPI_Type_create_subarray(ndims, [ny + 4, 2*nz + 1, nxB, 3], [ny, 2*nz + 1, nxB, 3], &
-                                  [2, 0, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memory_type, ierr)
-    call MPI_Type_commit(memory_type, ierr)
-    call MPI_Type_create_subarray(3, [ny, 2*nz + 1, nx + 1], [ny, 2*nz + 1, nxB], &
-                                  [0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, file_view_type1, ierr)
-    call MPI_Type_commit(file_view_type1, ierr)
-    call MPI_Type_create_subarray(3, [ny + 4, 2*nz + 1, nxB], [ny, 2*nz + 1, nxB], &
-                                  [2, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memory_type1, ierr)
-    call MPI_Type_commit(memory_type1, ierr)
+    call MPI_Type_create_subarray(4, [3, ny + 4, 2*nz + 1, nx + 1], [3, ny + 4, 2*nz + 1, nxB], &
+                                  [0, 0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, cpl_view_type, ierr)
+    call MPI_Type_commit(cpl_view_type, ierr)
+    call MPI_Type_create_subarray(3, [ny + 4, 2*nz + 1, nx + 1], [ny + 4, 2*nz + 1, nxB], &
+                                  [0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, cpl_pview_type, ierr)
+    call MPI_Type_commit(cpl_pview_type, ierr)
   end subroutine setup_decomposition
 
   subroutine free_mpi()
     !$omp target exit data map(delete: sendbuf, recvbuf)
     deallocate (sendbuf, recvbuf)
-    call MPI_Type_free(file_view_type, ierr)
-    call MPI_Type_free(memory_type, ierr)
-    call MPI_Type_free(file_view_type1, ierr)
-    call MPI_Type_free(memory_type1, ierr)
+    call MPI_Type_free(cpl_view_type, ierr)
+    call MPI_Type_free(cpl_pview_type, ierr)
   end subroutine free_mpi
 
   !------------------------------------------------------------------------

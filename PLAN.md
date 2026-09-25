@@ -578,6 +578,19 @@ sizes and the CPL centred-difference dissipation; the CPL run needed
 about 11 s/step on 4 CPU ranks against 0.66 s/step here on a shared
 RTX 3060.
 
+**CPL-compatible files (WP5).**  All output is now in the `hst-main`
+layout: `Dati.cart.out` and `fields/field<n>.fld` with the CPL text header
+and the C-ordered array with ghost rows, `p_fields/pField<n>.fld` headerless,
+`Runtimedata` and `variances_runtime.dat` with the CPL columns (spanwShear
+variant) as integrals over the box height.  Checked both ways on the
+side-by-side box: `scddns` reads a file written here and reports the same
+energy and Reynolds stress to all printed digits; a file written by
+`scddns` is read here with its time and rewritten bit-identically; after
+ten steps from the same field every `Runtimedata` and variance column
+agrees with the CPL run to 1e-6 except the dissipation (3e-4, compact
+against centred derivatives) and the CFL number (CPL subsamples it).
+The earlier private format and `tests/to_cpl_field.py` are gone.
+
 **Long sheared run (WP5).**  The default deck (box 3:2:1, 64x128x64 modes,
 Re = 1000, S = 1, cflmax = 0.8) run to S t = 100 on the RTX 3060 (57324
 steps, 0.18 s/step).  Averages over S t = 30..100 (701 samples):
@@ -612,10 +625,7 @@ every 20 time units.
   the mean mode, plus the equivalent body force `fy(y, t)` on the mean
   `w` equation; needs the stretched grid (`htcoeff`) to resolve the layer,
   which the stencil code already supports.
-- **CPL-compatible files**: write `fields/fieldN.fld` and `Dati.cart.out`
-  in the CPL layout (option), read CPL fields directly, and mirror the
-  `Runtimedata` / `variances_runtime.dat` columns, so the CPL post-processing
-  chain works unchanged.
+- ~~CPL-compatible files~~: done, as the only format (section 8).
 - **Pressure cadence**: the pressure is already computed only at snapshot
   times (`dt_field`); a separate `dt_pressure` would decouple the two.
 - **y decomposition and NCCL transport** (section 7, WP6), and the
