@@ -197,7 +197,7 @@ contains
   ! by the node phase exp(-i alfa S y dt).  For a mode exp(i ky y) that keeps
   ! the D0 weight delta0(ky) of the old wavenumber while the solve divides by
   ! that of the new one, a second-order error (1/6) dy^2 (ky^2 - ky'^2) per
-  ! substep (PLAN.md 8).  With exact_shift the physical quantity is advected:
+  ! substep (FINDINGS.md).  With exact_shift the physical quantity is advected:
   ! unweight with a D0 solve, apply the phase, re-weight with D0 at the new
   ! time.  Four extra line solves per substep.
   subroutine shear_shift(dt_sub)

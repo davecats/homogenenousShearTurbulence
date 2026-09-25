@@ -16,7 +16,7 @@
 ! v is checked for any S2(t) (the k^2 integral is done numerically); eta
 ! only for constant S2 (s2_period = 0), where its integral is closed-form.
 ! Discretisation errors: O(deltat^3) in time, and with the default
-! advection the (1/6) dy^2 (ky0^2 - ky(t)^2) term of PLAN.md 8; with
+! advection the (1/6) dy^2 (ky0^2 - ky(t)^2) term of FINDINGS.md; with
 ! exact_shift only the sixth-order stencil error remains.  Passes at 1e-3
 ! relative (tests/decks/kelvin*.in).
 program test_kelvin

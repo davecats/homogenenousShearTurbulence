@@ -3,8 +3,9 @@
 Direct numerical simulation of homogeneous shear turbulence on CPUs and
 NVIDIA GPUs, in about 2000 lines of plain Fortran.  Derived from the
 [`channel`](https://github.com/davecats/channel) DNS code and from the CPL
-HST code; the design, the reasoning behind every simplification and the
-findings made on the way are in [PLAN.md](PLAN.md).
+HST code; the design and the reasoning behind every simplification are in
+[DESIGN.md](DESIGN.md), the findings made on the way in
+[FINDINGS.md](FINDINGS.md).
 
 ## What it solves
 
@@ -22,7 +23,7 @@ integrated exactly by a phase shift (Sekimoto, Dong & Jimenez).  The
 phase shift is applied to the D0-weighted unknowns as in the CPL code, or,
 with `exact_shift = .true.` in the deck, to the unweighted quantities,
 which removes a second-order error at the cost of four extra line solves
-per substep (PLAN.md 8).  The pressure is computed online at snapshot
+per substep (FINDINGS.md).  The pressure is computed online at snapshot
 times.
 
 **Axis convention:** the shear direction is `y`, as in the channel code.
@@ -106,7 +107,7 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
   solutions, round-off.
 - `test_kelvin`: one Fourier mode in uniform shear against the closed-form
   Kelvin-mode solution with viscosity: 3.6e-4 at ny = 128 with the CPL
-  treatment of the mean-shear advection (second order in dy, PLAN.md 8),
+  treatment of the mean-shear advection (second order in dy, FINDINGS.md),
   4e-9 with `exact_shift = .true.`; also with constant and oscillating
   spanwise shear S2 (4e-9).
 - `test_pressure`: Taylor-Green vortex against its exact pressure
@@ -124,7 +125,7 @@ The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
 runs with different rank counts are bit-identical on the GPU.  Against the
 CPL code `hst-main` from an identical start the box energy agrees to 5e-5
 over 150 steps, and a run to S t = 100 gives S* = 6.3, -uv/q2 = 0.16 and
-production = dissipation (PLAN.md, section 8).
+production = dissipation (FINDINGS.md).
 
 ## Performance
 
@@ -134,6 +135,15 @@ Seconds per full time step (three substeps), `examples/bench_*.in`:
 | --- | --- | --- | --- |
 | 256 x 256 x 256 | 0.33 | 0.145 | 1.33 |
 | 512 x 512 x 512 | | 0.99 | |
+
+## Status
+
+| | |
+| --- | --- |
+| numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
+| machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
+| y decomposition, NCCL transport | not started (DESIGN.md 7, WP6) |
+| safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
 

@@ -1,0 +1,207 @@
+# Findings made while building and validating the code
+
+Kept in the order they were made.  The design they refer to is in
+[DESIGN.md](DESIGN.md); section numbers below are its sections.
+
+## Second-order error of the exact-advection step, and `exact_shift`
+
+With shear off, the Kelvin-mode test agrees with the closed form to 1e-9.
+With shear on, the error is 1.4e-3 at ny = 64 and 3.6e-4 at ny = 128 for a
+tilt of ky from pi to 1.05 -- second order in dy, independent of the time
+step and of viscosity.  The stencils themselves are sixth-order (modified
+wavenumber error 4e-7 at ny = 64).  The cause is the exact-advection step
+of 3.2.  The stored unknown is the D0-weighted Laplacian,
+d2v(i) = sum_j d0_j (lap v)(y_{i+j}); for a mode exp(i ky y) that is the
+Laplacian times the D0 symbol delta0(ky) = sum_j d0_j exp(i ky j dy)
+= 1 - (1/6)(ky dy)^2 + ...  Multiplying the stored unknown by the node
+phase exp(-i kx S y_i dt) tilts the mode to ky' but keeps the weight
+delta0(ky) of the old wavenumber, and the solve at the new time divides by
+delta0(ky').  Per substep the amplitude is off by delta0(ky)/delta0(ky');
+the product over substeps telescopes to delta0(ky0)/delta0(ky(t)), so the
+accumulated relative error is (1/6) dy^2 (ky0^2 - ky(t)^2): 1.43e-3 at
+ny = 64 against 1.43e-3 measured, independent of dt and of nu, and
+proportional to dy^2.  `S1data.cpl` shifts its D0-weighted right-hand
+sides in the same way, so this is a property of the reference method,
+kept deliberately.  The exact treatment would advect the unweighted
+Laplacian: d2v_new(i) = sum_j d0_j (lap v)(y_{i+j}) exp(-i kx S y_{i+j} dt),
+i.e. unweight with a D0 solve, apply the node phase, re-weight with D0, for
+each shifted quantity (the two right-hand sides and the two carried
+explicit terms): four extra line solves per substep, a local change to
+shear_shift.  Applying the phase inside the stencil to v itself would be
+wrong (it advects v instead of lap v and loses the Kelvin amplification).
+
+This is implemented as the namelist switch `exact_shift` in `&physics`
+(default `.false.`, i.e. the CPL method).  The prediction was checked on
+four modes before the change (measured / predicted at ny = 64: 1.43e-3 /
+1.43e-3, 3.56e-3 / 3.57e-3, 1.43e-3 / 1.43e-3, 5.69e-3 / 5.71e-3; the third
+mode tilts through ky = 0 at twice the rate and gives the same error, as
+only ky(t)^2 enters).  With `exact_shift = .true.` the Kelvin error is
+7e-8 at ny = 64 and 4e-9 at ny = 128 (from 1.4e-3 and 3.6e-4), on CPU and
+GPU alike (`tests/decks/kelvin_exact.in`).  Cost on the RTX 3060 for the
+256^3 deck: 2.05 s/step against 1.33 s/step, i.e. the four extra line
+solves add about 50% there; the A100 figure is to be measured.  On the
+nonlinear side-by-side deck (ny = 191, section below) the two treatments
+differ by 6e-5 in q2 after 150 steps, and the exact one is if anything
+closer to the CPL run (1e-5 against 5e-5 at t = 0.3): at that resolution
+the D0-weight error is already below the other differences between the
+codes.
+
+## Energy budget of isotropic decay (S = 0)
+
+On the deliberately coarse
+16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
+the RK start-up transient, with eps from the compact derivatives.
+
+---
+
+
+## Performance of the small grids
+
+The small default deck (64x128x64) runs at 0.18 s/step
+on the RTX 3060, only 7x faster than 256^3, so small grids are launch- and
+latency-bound (many small kernels per substep, line batches of 16 x
+columns).  Worth a pass later: larger line batches, fewer launches in
+transform_to_physical, the per-line solver's memory traffic.
+
+## Energy conservation of the nonlinear terms (WP5)
+
+`test_conservation`
+takes one inviscid step from the random field with one product at a time:
+uu, vv, ww alone change the energy by < 2e-5 per unit time relative, the
+three cross products by 0.12, 0.14, 0.27 with sum 5e-3, and all six
+together by 2e-5.  A viscous run at S = 0 from the same field satisfies
+d(q2)/dt = -2 eps to 1e-4 at every step when q2 includes the (0,0) mode.
+The first version of the initial field contained random mean profiles
+(the (0,0) mode, 7% of the energy); their exchange with the fluctuations
+made the fluctuation budget look 45% off and made the side-by-side start
+differ from hst-main, which zeroes that mode at start-up.  The mode is now
+left zero.  The nonlinear forcing of eta is checked separately against
+its closed form (`test_forcing`, 3e-4 = O(dt)), and Taylor-Green vortices
+in two orientations decay exactly with the nonlinear terms on
+(`test_taylorgreen`, 7e-6).
+
+## Side by side with `hst-main` (WP5)
+
+Both codes were started from the
+same random field (ours, written by `tests/to_cpl_field.py` in the CPL
+layout and read by `scddns` through `Vfield=`) on the `scddns.in` box
+(nx = 96, 32 spanwise modes, 191 points over ly = 2, Re = 1000, S = 1),
+fixed step 0.002, nonlinear.  Box-averaged energy and Reynolds stress:
+
+| t | q2 hst | q2 CPL | rel. diff | uv hst | uv CPL | rel. diff |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.02 | 0.720601 | 0.720599 | 2e-6 | 0.033396 | 0.033394 | 3e-5 |
+| 0.10 | 0.709871 | 0.709862 | 1e-5 | 0.030103 | 0.030096 | 2e-4 |
+| 0.20 | 0.696121 | 0.696100 | 3e-5 | 0.024652 | 0.024636 | 6e-4 |
+| 0.30 | 0.681737 | 0.681701 | 5e-5 | 0.016932 | 0.016909 | 1e-3 |
+
+The remaining difference is at the level of the two codes' dealiasing
+sizes and the CPL centred-difference dissipation; the CPL run needed
+about 11 s/step on 4 CPU ranks against 0.66 s/step here on a shared
+RTX 3060.
+
+## CPL-compatible files (WP5)
+
+All output is now in the `hst-main`
+layout: `Dati.cart.out` and `fields/field<n>.fld` with the CPL text header
+and the C-ordered array with ghost rows, `p_fields/pField<n>.fld` headerless,
+`Runtimedata` and `variances_runtime.dat` with the CPL columns (spanwShear
+variant) as integrals over the box height.  Checked both ways on the
+side-by-side box: `scddns` reads a file written here and reports the same
+energy and Reynolds stress to all printed digits; a file written by
+`scddns` is read here with its time and rewritten bit-identically; after
+ten steps from the same field every `Runtimedata` and variance column
+agrees with the CPL run to 1e-6 except the dissipation (3e-4, compact
+against centred derivatives) and the CFL number (CPL subsamples it).
+The earlier private format and `tests/to_cpl_field.py` are gone.
+
+## Unsteady spanwise shear S2 (DESIGN.md section 10 wish, done)
+
+`&physics`
+takes `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
+the CPL `S2data.cpl` law `S2(t) = A sin(2 pi (t - t0)/T)` for `t >= t0`
+(`A`, `T`, `t0_SL` there).  It enters in four places: the wrap phase of
+the ghost rows and of the line-solve corners, now
+`exp(-i (kx gamma_x + kz gamma_y))` with `gamma_y = int S2 dt` in closed
+form; the exact-advection phase over a substep,
+`exp(-i (kx S dt + kz int S2 dt) y)` (both variants of `shear_shift`);
+the tilting term of eta, `(S2 i alfa - S i beta) D0 v`; and the rapid
+term of the pressure, `-2 (S i alfa + S2 i beta) v`.  `S2` and `gamma_y`
+are written to `Runtimedata` and to the field headers.  One deliberate
+difference from `S2data.cpl`: there the carried explicit term of a
+substep is shifted with the displacement of the *previous* substep
+(`delta_gamma` is updated only after `buildrhs`), here with the current
+one, as in `S1data.cpl`.
+
+Checks: the Kelvin test generalises (`ky(t) = ky0 - S kx t - kz gamma_y`,
+`eta` closed-form for constant S2, `v` for any S2 with the viscous
+integral done numerically): 4.6e-9 for constant `S2 = 0.7` and 4.1e-9 for
+`S2 = 0.7 sin(2 pi t/1.5)` with `exact_shift`; with the default advection
+5.5e-5, again exactly the `(1/6) dy^2 (ky0^2 - ky(t)^2)` prediction with
+the end points of the tilt.  Nonlinear side-by-side with `scddns`
+(`A = 0.6, T = 0.5, t0 = 0`, 20 steps from the same field): `S2` and
+`gamma_y` agree to 1e-15, energy to 2e-6, `uw/2` to 7e-5, `vw/2` to
+2e-6 absolute.
+
+## Stokes layer and stretched grid (DESIGN.md section 10 wish, done)
+
+`&mesh`
+takes `ystretch` (the `htcoeff` tanh clustering at mid-box of
+`scddnsdata.cpl`; the stencil weights were already general, the row
+spacing `dyl` now enters the CFL estimate and the statistics as
+integration weights).  `&physics` takes `sl_amplitude`, `sl_period`,
+`sl_delta`, `sl_start`, `sl_bodyforce` (default true, the CPL
+`bodyforce`/`bf_dvw` flags) and `sl_ramp` (the `smoothStep` flag).
+`hst_stokes.f90` holds the profile
+`W = A exp(-s) cos(omega (t - t0) - s)`, `s = sqrt((y - ly/2)^2/delta^2 + 0.01)`,
+and its body force `f = dW/dt - nu W''` in closed form (checked against
+the `bodyF` expression of `SLdata.cpl` term by term).  With the body
+force the mean `w` equation carries `f` and drops its Reynolds-stress
+divergence (`bf_dvw`), so the mean profile is exactly `W` whatever the
+turbulence does; the profile is prescribed outright during the first two
+periods and on the two edge rows, as `apply_SL` does.  Without the body
+force it is prescribed at every substep.  Two differences from the CPL
+code, both deliberate: the force is added D0-weighted like every other
+term (`SLdata.cpl` adds it raw, a second-order error in the applied
+force), and the two-period window counts from `sl_start` rather than from
+time zero.  `stokes_runtime.dat` carries the region averages of
+`<u_i u_i>` and `<grad u : grad u>` inside and outside `|y - ly/2| < 8 delta`
+(the `energy_in/out`, `diss_in/out` of the CPL `Runtimedata`).
+
+Checks: `test_stokes` starts from no fluctuations and runs three
+periods, one of them beyond the prescription window; the mean profile
+then agrees with the analytic layer to 2.3e-5 (ny = 128, `ystretch = 3`,
+`delta = 0.05`).  The error is spatial and comes from the `eps = 0.1`
+smoothing of `|y|`, a feature of width `eps delta`: with `ystretch =
+1.5` it is 2.6e-3, unchanged by halving the time step, and falls to
+1.1e-4 with twice the points or twice `delta`.  The Kelvin test on the
+stretched grid gives 7e-8.  No side-by-side with `hst-main` was possible:
+its `StokesLayer` build does not compile as delivered (`SLdata` is used
+after `S1data`, which needs its `fy`, and the S2 header bookkeeping is
+undeclared on that path, and `updategamma` of the S2 path is called
+unguarded); three scratch-copy fixes were tried and the build still
+failed, so that path of `hst-main` is unmaintained.
+
+## Long sheared run (WP5)
+
+The default deck (box 3:2:1, 64x128x64 modes,
+Re = 1000, S = 1, cflmax = 0.8) run to S t = 100 on the RTX 3060 (57324
+steps, 0.18 s/step).  Averages over S t = 30..100 (701 samples):
+
+| quantity | hst | literature |
+| --- | --- | --- |
+| production / dissipation, -S uv / eps | 1.006 | 1 in a statistically stationary box |
+| S* = S q2 / eps | 6.3 | 5..7 (Rogers & Moin 1987; Sekimoto, Dong & Jimenez 2016) |
+| -uv / q2 | 0.159 | 0.15 (Tavoularis & Karnik 1989) |
+| b_uu, b_vv, b_ww | +0.10, -0.04, -0.06 | +0.2, -0.14, -0.06 at Re_lambda ~ 150..250 |
+| Re_lambda | 33 | |
+
+The anisotropy is weaker than the laboratory values, as expected at
+Re_lambda = 33 in a small box.  Resolution of the default deck at these
+statistics: dx/eta = 2.0, dy/eta = 1.0, dz/eta = 0.3, i.e. x is the coarse
+direction; for a production run in this box choose nx about 3 nz (e.g.
+nx = 191, nz = 63, ny = 128).  Snapshots and pressure files were written
+every 20 time units.
+
+---
+
