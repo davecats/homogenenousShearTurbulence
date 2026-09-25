@@ -82,27 +82,32 @@ contains
     call RFT()
   end subroutine transform_to_physical
 
-  ! products(:, :, :, p) = a*b*factor, p = 1..3, with (a, b) = uu, vv, ww for
-  ! group 1 and uv, vw, uw for group 2.  factor = 1/(2 nxd nzd) is the
-  ! normalisation of the inverse transforms.
+  ! products(:, :, :, 1:3) = uu, vv, ww (group 1) or uv, vw, uw (group 2),
+  ! times factor = 1/(2 nxd nzd), the normalisation of the inverse
+  ! transforms.  One pass over the three velocity fields: each thread reads
+  ! u, v, w once and writes its three products (with the product index as
+  ! the outer loop each field was streamed twice per call).
   subroutine build_products(g)
     integer(C_INT), intent(in) :: g
-    integer(C_INT) :: i, j, k, p, a, b, y_first, y_last
+    integer(C_INT) :: i, j, k, y_first, y_last
+    real(C_DOUBLE) :: u, v, w
     y_first = ny0 - 2
     y_last = nyN + 2
-    !$omp target teams distribute parallel do collapse(4) default(none) &
-    !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor, g) private(i, j, k, p, a, b)
-    do p = 1, 3
-      do i = y_first, y_last
-        do j = 1, nzB
-          do k = 1, 2*nxd
-            if (g == 1) then
-              a = p; b = p                      ! uu, vv, ww
-            else
-              a = merge(1, 2, p /= 2); b = min(p + 1, 3)   ! uv, vw, uw
-            end if
-            products(k, j, i, p) = rVVdx(k, j, i, a)*rVVdx(k, j, i, b)*factor
-          end do
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(rVVdx, products, nxd, nzB, y_first, y_last, factor, g) private(i, j, k, u, v, w)
+    do i = y_first, y_last
+      do j = 1, nzB
+        do k = 1, 2*nxd
+          u = rVVdx(k, j, i, 1); v = rVVdx(k, j, i, 2); w = rVVdx(k, j, i, 3)
+          if (g == 1) then
+            products(k, j, i, 1) = u*u*factor
+            products(k, j, i, 2) = v*v*factor
+            products(k, j, i, 3) = w*w*factor
+          else
+            products(k, j, i, 1) = u*v*factor
+            products(k, j, i, 2) = v*w*factor
+            products(k, j, i, 3) = u*w*factor
+          end if
         end do
       end do
     end do
