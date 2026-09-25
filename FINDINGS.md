@@ -205,3 +205,76 @@ every 20 time units.
 
 ---
 
+
+## Performance pass (cleanup and performance session, 2026-09-25)
+
+Baselines of the code as it stood before this session, seconds per full
+step (three substeps), `examples/bench_*.in`:
+
+| deck | grid | RTX 3060, 1 rank | istmio2 CPU 1 / 4 ranks | A100 1 / 4 GPUs |
+| --- | --- | --- | --- | --- |
+| bench_64 | 64 x 128 x 64 | 0.180 | 1.86 / 1.03 | 0.054 / |
+| bench_256 | 256^3 | 1.33 | | 0.334 / 0.140 |
+| bench_512 | 512^3 | | | 1.99 / 0.98 |
+
+**Where the time went.**  A per-phase timer (`timing = .true.`) and nsys
+kernel summaries, on the RTX 3060 and on one A100, before any change:
+
+- The line solver dominated on both machines: the solve kernel plus its
+  assembly kernel were 30% of the GPU time on the RTX 3060 and 51% on the
+  A100 (bench_256).  The assembly kernel alone (writing the five diagonals
+  of every line and an `exp` per element) was 19% on the A100.
+- On the RTX 3060 the four cuFFT calls were 40% of the time, on the A100
+  12%: the GeForce card runs double precision at 1/64 of its single
+  precision rate, so every FP64-heavy kernel (the FFTs, the complex
+  divisions of the solver) is compute-bound there, while the A100 is
+  bandwidth-bound.  Timings on the RTX 3060 are therefore not a guide to
+  the A100 for the FFT and solver shares.
+- `compute_cfl` read the physical field with y innermost, i.e. strided by
+  a whole plane: 33 ms per call on the RTX 3060 (3% of the time) for a
+  reduction over 900 MB.
+- The 64^3-class deck was 83% kernel-busy on the RTX 3060 with 61 launches
+  per substep, so launch latency was a smaller part than expected; on the
+  A100 the same deck ran at 0.031 s/step after the solver batches were
+  widened (below), 1.7x the original.
+- The transposes (pack, alltoall, unpack) were 8% on one A100; the
+  512^3 run on four A100 reached 51% parallel efficiency.
+
+**What was done, in order, each with the regression at 1e-10 (most of
+them bit-identical):**
+
+1. *All x columns in one line-solver batch* on the GPU (`line_chunk`,
+   default 16 before): 0.180 -> 0.154 s/step on the RTX 3060 for bench_64,
+   0.054 -> 0.031 on the A100.  On the CPU the larger workspace falls out
+   of the cache (1.86 -> 2.05 s/step), so the CPU default stays 16.
+2. *The line solver generates its rows on the fly.*  One thread per line
+   builds each row from `der`, `k2` and the wrap phase, eliminates with the
+   two previous rows held in registers, and forward-substitutes the three
+   right-hand sides of the bordering scheme in the same sweep; only the
+   three upper diagonals are stored for the back substitution.  The
+   assembly kernel and two of the five stored diagonals are gone; same
+   operations in the same order, so the fields are bit-identical.  On the
+   CPU: 0.60 -> 0.45 s/step in the solves of bench_64 (1 rank).
+3. *`compute_cfl` with x innermost*: 33 -> ~3 ms on the RTX 3060.
+4. *Three fields per transform and per transpose*: u, v, w together, the
+   six products in two groups of three, the x transforms in place (the
+   real buffers are pointer views of the complex ones, found on the device
+   through the mapping of their buffer).  Launches per substep 100 -> ~35,
+   collectives 9 -> 3.
+5. *cuFFT on the OpenMP target stream* (`ompx_get_cuda_stream`): the
+   eight `cudaDeviceSynchronize` per substep inherited from the channel
+   code are gone; nsys shows every kernel on one stream.
+6. *FFTW_MEASURE instead of FFTW_PATIENT*: planning of a 256^3 run on
+   four CPU ranks 436 s -> 16 s at the same execution speed.  `-O3
+   -march=native` was tried and gave nothing (2.10 against 2.04 s/step).
+
+**Tried and dropped.**  Padding the x rows to 128 bytes or to a power of
+two for cuFFT: the 3/2 length 384 = 128 x 3 uses cuFFT's "regular" kernels,
+but 512 costs more than it gains (18.4 against 15.2 ms on the RTX 3060 for
+the real transform, 6.7 against 5.1 ms for the complex one) and 400 or
+392 change nothing.  In-place against out-of-place: no difference, so the
+in-place layout is free.
+
+The RTX 3060 was shared with another job during the second half of the
+session; its numbers after item 3 are not comparable with the earlier
+ones (a back-to-back A/B of two builds under the same load is).
