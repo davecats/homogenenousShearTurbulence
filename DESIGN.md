@@ -18,7 +18,15 @@ the code departed from this plan:
   the second-order error of the CPL treatment (FINDINGS.md, first entry).
 - The line solves go through one routine, `line_solve(kind, ...)`, for the
   two implicit systems, the Poisson equation, `d/dy` and the `D0` inverse;
-  the batch width is the deck parameter `line_chunk`.
+  the batch width is the deck parameter `line_chunk`.  The matrix is never
+  stored (3.4 says "assembly and solve are one kernel each"): the solve
+  kernel builds each row on the fly and keeps the two previous rows in
+  registers, so the assembly kernel and two thirds of the workspace are
+  gone (FINDINGS.md, performance).
+- The transforms and transposes carry three fields at once (u, v, w, or
+  three of the six products) and the x transforms run in place, with the
+  real buffers as pointer views of the complex ones; cuFFT runs on the
+  OpenMP target stream, without host synchronisation (FINDINGS.md).
 - The tests are Fortran programs (`tests/test_*.f90` on a shared harness)
   run by `tests/run_tests.sh`, plus `tests/regression.sh` against stored
   fields; the layout of section 4 is the README's.

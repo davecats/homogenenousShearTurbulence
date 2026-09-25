@@ -69,6 +69,11 @@ If `Dati.cart.out` exists it is read (with `time_from_restart = .true.`
 the clock too); a field written by the CPL code works as well.  Otherwise
 a seeded, divergence-free random field is generated (`&init`).
 
+`timing = .true.` in `&time_control` prints the wall-clock time per phase
+of the substep at the end of the run (`src/hst_timer.f90`).  `line_chunk`
+in `&mesh` bounds the workspace of the line solver (x columns per batch;
+0 = all columns on the GPU, 16 on the CPU, see `src/hst_linsolve.f90`).
+
 ## Output
 
 All files are in the layout of the CPL code `hst-main`, so its
@@ -103,8 +108,9 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
 
 - `test_roundtrip`: spectral-physical-spectral round trip and restart file,
   round-off on any rank count.
-- `test_linsolve`: the cyclic pentadiagonal line solver against exact
-  solutions, round-off.
+- `test_linsolve`: each system kind of the line solver (the two implicit
+  systems, the Poisson equation, `d/dy`, the `D0` inverse) against the
+  operator applied on the host through the ghost rows, round-off.
 - `test_kelvin`: one Fourier mode in uniform shear against the closed-form
   Kelvin-mode solution with viscosity: 3.6e-4 at ny = 128 with the CPL
   treatment of the mean-shear advection (second order in dy, FINDINGS.md),
@@ -152,17 +158,18 @@ src/hst_params.f90       all state: mesh, parameters, clock, rank layout, fields
 src/hst_input.f90        the namelist deck
 src/hst_mpi.f90          x-z pencil decomposition, alltoall transpose, MPI-IO types
 src/hst_fft.f90          FFTW / cuFFT (the only vendor-specific file besides hst_mpi)
+src/hst_timer.f90        per-phase timer
 src/hst_setup.f90        allocation and device mapping
 src/hst_transforms.f90   spectral <-> physical, products, CFL
 src/hst_initial.f90      seeded initial field
 src/hst_io.f90           restart and snapshot files
 src/hst_derivatives.f90  compact stencils, shear-periodic ghost rows
-src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode
+src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly
 src/hst_equations.f90    the equations and one RK step
 src/hst_stats.f90        Runtimedata
 src/hst_pressure.f90     pressure at snapshot times
 src/hst.f90              main program
-tests/                   test programs, decks, runner, field comparison
+tests/                   test programs on tests/test_common.f90, decks, runner, regression, field comparison
 env/, jobs/              environment scripts and SLURM jobs
 examples/                benchmark decks
 ```

@@ -45,7 +45,7 @@ module hst_fft
 
 #ifdef HAVE_FFTW
   include 'fftw3.f03'
-  integer, save :: plan_type = FFTW_PATIENT
+  integer, save :: plan_type = FFTW_MEASURE      ! PATIENT plans take minutes at 256^3 for a few % of transform time
   type(C_PTR), save :: pFFT, pIFT, pRFT, pHFT
 #endif
 #ifdef HAVE_CUDA

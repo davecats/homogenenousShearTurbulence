@@ -10,6 +10,7 @@
   beta0 = 6.283185307179586     ! 2*pi/lz, lz = 1
   ly = 2.0
   ystretch = 0.0                ! tanh clustering of the y points at mid-box (0 = uniform)
+  line_chunk = 0                ! x columns per line-solver batch (0 = all on the GPU, 16 on the CPU)
 /
 
 &physics
@@ -38,6 +39,7 @@
   dt_save = 10.0                ! Dati.cart.out restart interval
   time = 0.0                    ! start time when not restarting
   time_from_restart = .false.
+  timing = .false.              ! .true.: print the time per phase of the substep at the end
 /
 
 &init
