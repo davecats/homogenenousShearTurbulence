@@ -143,7 +143,7 @@ the code before it):
 | --- | --- | --- | --- | --- |
 | 64 x 128 x 64 | 0.019 (0.054) | | 0.17 (0.18) | 0.89 (1.03) |
 | 256 x 256 x 256 | 0.115 (0.334) | 0.101 (0.140) | 1.25 (1.33) | |
-| 512 x 512 x 512 | see FINDINGS.md (1.99) | 0.80 (0.98) | | |
+| 512 x 512 x 512 | 0.97 (1.99) | 0.81 (0.98) | | |
 
 The RTX 3060 runs double precision at 1/64 rate, so it gains little from
 what helps the A100; `timing = .true.` prints where the time goes.  Four

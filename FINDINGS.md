@@ -278,3 +278,23 @@ in-place layout is free.
 The RTX 3060 was shared with another job during the second half of the
 session; its numbers after item 3 are not comparable with the earlier
 ones (a back-to-back A/B of two builds under the same load is).
+
+**Result** (same decks and machines as the baseline table above; A100
+numbers from `jobs/horeka_bench_all.slurm` on the same day):
+
+| deck | RTX 3060, 1 rank | istmio2 CPU 1 / 4 ranks | A100 1 / 4 GPUs |
+| --- | --- | --- | --- |
+| bench_64 | 0.17 (shared card) | 1.54 / 0.89 | 0.0186 / |
+| bench_256 | 1.25 (shared card) | | 0.115 / 0.101 |
+| bench_512 | | | 0.970 / 0.809 |
+
+The A100 is 2.9x faster on one GPU at 64^3-class and 256^3 and 2.1x at
+512^3; four GPUs gained less (1.4x at 256^3, 1.2x at 512^3) because their
+step is 85-90% transposes (pack, alltoall, unpack; `NP=4` profile), which
+the batching made larger but not fewer bytes.  That is the next session's
+subject (NEXT_SESSION.md).  One more memory item came out of the 512^3
+run on one A100: with three-field batches cuFFT's per-plan work areas no
+longer fit next to the fields (out of memory at 27 GB of fields and
+buffers), so the four plans now share one work area
+(`cufftSetAutoAllocation` off); the line-solver workspace with all
+columns is 6.1 GB there (`line_chunk` bounds it).
