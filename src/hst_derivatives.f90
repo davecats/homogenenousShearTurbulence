@@ -20,7 +20,7 @@ module hst_derivatives
 
   implicit none
   private
-  public :: setup_derivatives, fill_ghosts, shear_shift_length
+  public :: setup_derivatives, fill_ghosts, fill_ghosts_field, shear_shift_length
 
 contains
 
@@ -84,21 +84,27 @@ contains
   ! Ghost rows of component c of V from its interior rows, at the current time.
   subroutine fill_ghosts(c)
     integer(C_INT), intent(in) :: c
+    call fill_ghosts_field(V(:, :, :, c), shear_shift_length())
+  end subroutine fill_ghosts
+
+  ! Ghost rows of any field with the layout of a component of V, for the
+  ! streamwise displacement `shift` of the upper image.
+  subroutine fill_ghosts_field(field, shift)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
+    real(C_DOUBLE), intent(in) :: shift
     integer(C_INT) :: ix, iz
-    real(C_DOUBLE) :: shift
     complex(C_DOUBLE_COMPLEX) :: ph
-    shift = shear_shift_length()
     !$omp target teams distribute parallel do collapse(2) default(none) &
-    !$omp shared(V, nx0, nxN, nz, ny, alfa0, shift, c) private(ix, iz, ph)
+    !$omp shared(field, nx0, nxN, nz, ny, alfa0, shift) private(ix, iz, ph)
     do ix = nx0, nxN
       do iz = -nz, nz
         ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
-        V(ny, iz, ix, c) = V(0, iz, ix, c)*ph
-        V(ny + 1, iz, ix, c) = V(1, iz, ix, c)*ph
-        V(-1, iz, ix, c) = V(ny - 1, iz, ix, c)*conjg(ph)
-        V(-2, iz, ix, c) = V(ny - 2, iz, ix, c)*conjg(ph)
+        field(ny, iz, ix) = field(0, iz, ix)*ph
+        field(ny + 1, iz, ix) = field(1, iz, ix)*ph
+        field(-1, iz, ix) = field(ny - 1, iz, ix)*conjg(ph)
+        field(-2, iz, ix) = field(ny - 2, iz, ix)*conjg(ph)
       end do
     end do
-  end subroutine fill_ghosts
+  end subroutine fill_ghosts_field
 
 end module hst_derivatives

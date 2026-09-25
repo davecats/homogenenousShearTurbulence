@@ -16,6 +16,7 @@ run() {   # run <ranks> <exe> <deck>
 run "$np" test_roundtrip small.in
 run "$np" test_linsolve small.in
 run 1     test_kelvin kelvin.in
+run 1     test_kelvin kelvin_exact.in
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in
 run 1     test_forcing pressure.in

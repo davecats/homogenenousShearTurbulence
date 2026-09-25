@@ -26,7 +26,7 @@ module hst_linsolve
 
   implicit none
   private
-  public :: init_linsolve, free_linsolve, solve_lines, solve_component, apply_dy
+  public :: init_linsolve, free_linsolve, solve_lines, solve_component, apply_dy, unweight_d0
   public :: A, X, Y1, Y2, nlines_max
   public :: KIND_D2V, KIND_ETA, KIND_POISSON
 
@@ -262,5 +262,52 @@ contains
       end do
     end do
   end subroutine apply_dy
+
+  ! dst = D0^{-1} src on the interior rows: the unweighted quantity behind a
+  ! D0-weighted stencil sum.  `shift` is the streamwise displacement of the
+  ! upper image that the wrap phase of D0 must use.  Only the interior rows
+  ! of src are read.
+  subroutine unweight_d0(src, dst, shift)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: src(ny0 - 2:, -nz:, nx0:)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
+    real(C_DOUBLE), intent(in) :: shift
+    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol
+    complex(C_DOUBLE_COMPLEX) :: ph, wrap
+
+    do ix0 = nx0, nxN, line_chunk
+      ix1 = min(ix0 + line_chunk - 1, nxN)
+      ncol = 2*nz + 1
+      nl = (ix1 - ix0 + 1)*ncol
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(A, X, src, der, ix0, ix1, nz, ny, ncol, alfa0, shift) &
+      !$omp private(ix, iz, iy, j, il, ph, wrap)
+      do ix = ix0, ix1
+        do iz = -nz, nz
+          do iy = 0, ny - 1
+            il = (iz + nz + 1) + ncol*(ix - ix0)
+            ph = exp(dcmplx(0.0d0, -alfa0*ix*shift))
+            do j = -2, 2
+              wrap = 1.0d0
+              if (iy + j >= ny) wrap = ph
+              if (iy + j < 0) wrap = conjg(ph)
+              A(il, iy, j) = der(iy, 0, j)*wrap
+            end do
+            X(il, iy) = src(iy, iz, ix)
+          end do
+        end do
+      end do
+      call solve_lines(nl)
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(X, dst, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
+      do ix = ix0, ix1
+        do iz = -nz, nz
+          do iy = 0, ny - 1
+            il = (iz + nz + 1) + ncol*(ix - ix0)
+            dst(iy, iz, ix) = X(il, iy)
+          end do
+        end do
+      end do
+    end do
+  end subroutine unweight_d0
 
 end module hst_linsolve

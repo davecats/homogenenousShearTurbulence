@@ -15,7 +15,11 @@ shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (`v`, `eta`) formulation, RK3 (Rai-Moin) for the nonlinear terms,
 Crank-Nicolson for the viscous ones, and the mean-shear advection
 integrated exactly by a phase shift (Sekimoto, Dong & Jimenez).  The
-pressure is computed online at snapshot times.
+phase shift is applied to the D0-weighted unknowns as in the CPL code, or,
+with `exact_shift = .true.` in the deck, to the unweighted quantities,
+which removes a second-order error at the cost of four extra line solves
+per substep (PLAN.md 8).  The pressure is computed online at snapshot
+times.
 
 **Axis convention:** the shear direction is `y`, as in the channel code.
 The CPL code calls that direction `z` (and its `w` is our `v`).
@@ -85,8 +89,9 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
 - `test_linsolve`: the cyclic pentadiagonal line solver against exact
   solutions, round-off.
 - `test_kelvin`: one Fourier mode in uniform shear against the closed-form
-  Kelvin-mode solution with viscosity (3.6e-4 at ny = 128; see PLAN.md 8
-  for why this is second order in dy).
+  Kelvin-mode solution with viscosity: 3.6e-4 at ny = 128 with the CPL
+  treatment of the mean-shear advection (second order in dy, PLAN.md 8),
+  4e-9 with `exact_shift = .true.`.
 - `test_pressure`: Taylor-Green vortex against its exact pressure
   (1.9e-5 at ny = 64).
 - `test_taylorgreen`: Taylor-Green vortices in two orientations decay

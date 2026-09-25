@@ -17,14 +17,14 @@ contains
     real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
 
     namelist /mesh/ nx, ny, nz, alfa0, beta0, ly
-    namelist /physics/ re, S, linear
+    namelist /physics/ re, S, linear, exact_shift
     namelist /time_control/ deltat, cflmax, t_max, nstep, dt_stat, dt_field, dt_save, time, time_from_restart
     namelist /init/ amplitude, seed, kpeak
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
     ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI
-    re = 1000.0d0; S = 1.0d0; linear = .false.
+    re = 1000.0d0; S = 1.0d0; linear = .false.; exact_shift = .false.
     deltat = 0.0d0; cflmax = 1.0d0; t_max = 100.0d0; nstep = 1000000
     dt_stat = 0.01d0; dt_field = 10.0d0; dt_save = 10.0d0
     time = 0.0d0; time_from_restart = .false.
@@ -76,7 +76,8 @@ contains
     write (*, '(A,I6,A,I6)') '   nxd   =', nxd, '   nzd   =', nzd
     write (*, '(A,F10.6,A,F10.6,A,F10.6)') '   lx    =', lx, '   ly    =', ly, '   lz    =', lz
     write (*, '(A,F10.6,A,F10.6)') '   alfa0 =', alfa0, '   beta0 =', beta0
-    write (*, '(A,F10.2,A,F10.6,A,L1)') '   re    =', re, '   S     =', S, '   linear =', linear
+    write (*, '(A,F10.2,A,F10.6,A,L1,A,L1)') '   re    =', re, '   S     =', S, '   linear =', linear, &
+      '   exact_shift =', exact_shift
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,L1)') '   nstep =', nstep, '   time_from_restart = ', time_from_restart

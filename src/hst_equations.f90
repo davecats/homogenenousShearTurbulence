@@ -24,8 +24,8 @@ module hst_equations
 
   use, intrinsic :: iso_c_binding
   use hst_params
-  use hst_derivatives, only: fill_ghosts
-  use hst_linsolve, only: solve_component, apply_dy, KIND_D2V, KIND_ETA
+  use hst_derivatives, only: fill_ghosts, fill_ghosts_field
+  use hst_linsolve, only: solve_component, apply_dy, unweight_d0, KIND_D2V, KIND_ETA
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
 
@@ -185,10 +185,29 @@ contains
   ! Exact integration of the mean-shear advection over a substep of length
   ! dt_sub: the right-hand sides (in V(:, :, :, 1:2)) and the carried
   ! explicit terms move to the new time frame.
+  !
+  ! Default (as in S1data.cpl): the stored, D0-weighted sums are multiplied
+  ! by the node phase exp(-i alfa S y dt).  For a mode exp(i ky y) that keeps
+  ! the D0 weight delta0(ky) of the old wavenumber while the solve divides by
+  ! that of the new one, a second-order error (1/6) dy^2 (ky^2 - ky'^2) per
+  ! substep (PLAN.md 8).  With exact_shift the physical quantity is advected:
+  ! unweight with a D0 solve, apply the phase, re-weight with D0 at the new
+  ! time.  Four extra line solves per substep.
   subroutine shear_shift(dt_sub)
     real(C_DOUBLE), intent(in) :: dt_sub
     integer(C_INT) :: ix, iy, iz
+    real(C_DOUBLE) :: shift_old, shift_new
     complex(C_DOUBLE_COMPLEX) :: f
+
+    if (exact_shift) then
+      shift_old = modulo(S*time*ly, lx)
+      shift_new = modulo(S*(time + dt_sub)*ly, lx)
+      call shift_unweighted(V(:, :, :, 1), dt_sub, shift_old, shift_new)
+      call shift_unweighted(V(:, :, :, 2), dt_sub, shift_old, shift_new)
+      call shift_unweighted(oldrhs(:, :, :, 1), dt_sub, shift_old, shift_new)
+      call shift_unweighted(oldrhs(:, :, :, 2), dt_sub, shift_old, shift_new)
+      return
+    end if
     ! (no default(none): nvfortran 25.9 rejects the grid array y in a
     !  shared clause here, although it accepts it elsewhere)
     !$omp target teams distribute parallel do collapse(3) &
@@ -205,6 +224,40 @@ contains
       end do
     end do
   end subroutine shear_shift
+
+  ! q <- D0 [ phase * (D0^{-1} q) ]  with D0 at the old time on the way in
+  ! and at the new time on the way out; memrhs(:, :, :, 1) is the scratch.
+  subroutine shift_unweighted(q, dt_sub, shift_old, shift_new)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: q(ny0 - 2:, -nz:, nx0:)
+    real(C_DOUBLE), intent(in) :: dt_sub, shift_old, shift_new
+    integer(C_INT) :: ix, iy, iz, j
+    complex(C_DOUBLE_COMPLEX) :: acc
+
+    call unweight_d0(q, memrhs(:, :, :, 1), shift_old)
+    !$omp target teams distribute parallel do collapse(3) &
+    !$omp shared(memrhs, y, alfa0, S, dt_sub, nx0, nxN, nz, ny) private(ix, iy, iz)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        do iy = 0, ny - 1
+          memrhs(iy, iz, ix, 1) = memrhs(iy, iz, ix, 1)*exp(dcmplx(0.0d0, -alfa0*ix*S*y(iy)*dt_sub))
+        end do
+      end do
+    end do
+    call fill_ghosts_field(memrhs(:, :, :, 1), shift_new)
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(memrhs, q, der, nx0, nxN, nz, ny) private(ix, iy, iz, j, acc)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        do iy = 0, ny - 1
+          acc = 0.0d0
+          do j = -2, 2
+            acc = acc + der(iy, 0, j)*memrhs(iy + j, iz, ix, 1)
+          end do
+          q(iy, iz, ix) = acc
+        end do
+      end do
+    end do
+  end subroutine shift_unweighted
 
   ! Implicit solves, then u and w from continuity and the definition of eta:
   !   i alfa u + dv/dy + i beta w = 0,   i beta u - i alfa w = eta

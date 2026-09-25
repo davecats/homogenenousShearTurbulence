@@ -15,6 +15,7 @@
   re = 1000.0                   ! 1/nu
   S = 1.0                       ! mean shear dU/dy
   linear = .false.              ! .true. drops the nonlinear terms (tests)
+  exact_shift = .false.         ! .true.: advect unweighted quantities, removes a dy^2 error (PLAN.md 8)
 /
 
 &time_control

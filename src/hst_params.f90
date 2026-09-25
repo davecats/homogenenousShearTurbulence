@@ -29,6 +29,7 @@ module hst_params
   real(C_DOUBLE), save :: re, ni              ! Reynolds number and 1/re
   real(C_DOUBLE), save :: S                   ! mean shear dU/dy
   logical, save :: linear                     ! .true.: nonlinear terms off
+  logical, save :: exact_shift                ! .true.: advect the unweighted quantities (PLAN.md 8)
   !$omp declare target(ni, S)
 
   !------------------------------------------------------- clock and I/O ----

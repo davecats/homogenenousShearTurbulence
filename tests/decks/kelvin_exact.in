@@ -1,0 +1,6 @@
+! Kelvin-mode test deck (tests/test_kelvin): one mode, linearised, fixed step.
+! Same with exact_shift: expected ~1e-6 (PLAN.md 8).
+&mesh  nx = 3, ny = 128, nz = 3, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .true., exact_shift = .true. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 1.0, nstep = 100000, dt_stat = 1.0, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /

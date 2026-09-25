@@ -504,6 +504,17 @@ explicit terms): four extra line solves per substep, a local change to
 shear_shift.  Applying the phase inside the stencil to v itself would be
 wrong (it advects v instead of lap v and loses the Kelvin amplification).
 
+This is implemented as the namelist switch `exact_shift` in `&physics`
+(default `.false.`, i.e. the CPL method).  The prediction was checked on
+four modes before the change (measured / predicted at ny = 64: 1.43e-3 /
+1.43e-3, 3.56e-3 / 3.57e-3, 1.43e-3 / 1.43e-3, 5.69e-3 / 5.71e-3; the third
+mode tilts through ky = 0 at twice the rate and gives the same error, as
+only ky(t)^2 enters).  With `exact_shift = .true.` the Kelvin error is
+7e-8 at ny = 64 and 4e-9 at ny = 128 (from 1.4e-3 and 3.6e-4), on CPU and
+GPU alike (`tests/decks/kelvin_exact.in`).  Cost on the RTX 3060 for the
+256^3 deck: 2.05 s/step against 1.33 s/step, i.e. the four extra line
+solves add about 50% there; the A100 figure is to be measured.
+
 **Energy budget of isotropic decay (S = 0).**  On the deliberately coarse
 16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
 the RK start-up transient, with eps from the compact derivatives.
