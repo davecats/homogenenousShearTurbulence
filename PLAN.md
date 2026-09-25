@@ -513,7 +513,12 @@ only ky(t)^2 enters).  With `exact_shift = .true.` the Kelvin error is
 7e-8 at ny = 64 and 4e-9 at ny = 128 (from 1.4e-3 and 3.6e-4), on CPU and
 GPU alike (`tests/decks/kelvin_exact.in`).  Cost on the RTX 3060 for the
 256^3 deck: 2.05 s/step against 1.33 s/step, i.e. the four extra line
-solves add about 50% there; the A100 figure is to be measured.
+solves add about 50% there; the A100 figure is to be measured.  On the
+nonlinear side-by-side deck (ny = 191, section below) the two treatments
+differ by 6e-5 in q2 after 150 steps, and the exact one is if anything
+closer to the CPL run (1e-5 against 5e-5 at t = 0.3): at that resolution
+the D0-weight error is already below the other differences between the
+codes.
 
 **Energy budget of isotropic decay (S = 0).**  On the deliberately coarse
 16x32x16 deck the ratio -d(q2)/dt / (2 eps) stays within 5% of one after
