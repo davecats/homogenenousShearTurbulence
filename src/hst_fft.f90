@@ -37,6 +37,9 @@ module hst_fft
   private
 
   public :: init_fft, free_fft, FFT, IFT, RFT, HFT, device_sync
+#ifdef HAVE_CUDA
+  public :: target_stream
+#endif
   public :: VVdz, VVdx, rVVdx, VVdp, products
 
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: VVdz(:, :, :, :), VVdx(:, :, :, :), VVdp(:, :, :, :)
@@ -54,9 +57,10 @@ module hst_fft
   ! cuFFT would otherwise give each plan its own, about the size of the
   ! data it transforms, which at 512^3 on one GPU is more than the fields.
   integer(1), device, allocatable, save :: work(:)
-  ! The CUDA stream the OpenMP target regions run on (NVHPC extension).
-  ! The cuFFT plans are put on it, so transforms and kernels are ordered
-  ! by the stream and no host synchronisation is needed between them.
+  ! The CUDA stream the OpenMP target regions run on (NVHPC extension,
+  ! target_stream below).  The cuFFT plans are put on it, and so are the
+  ! NCCL transfers of hst_mpi, so transforms, transfers and kernels are
+  ! ordered by the stream and no host synchronisation is needed between them.
   interface
     function ompx_get_cuda_stream(device, nowait) bind(c, name='ompx_get_cuda_stream') result(stream)
       import :: C_PTR, C_INT
@@ -121,7 +125,7 @@ contains
     istat = cufftSetWorkArea(cu_pRFT, work); call check(istat, 'cufftSetWorkArea RFT')
     istat = cufftSetWorkArea(cu_pHFT, work); call check(istat, 'cufftSetWorkArea HFT')
     if (has_terminal) write (*, '(A,F8.1,A)') '   cuFFT work area: ', maxval(ws)/1024.0d0**2, ' MB per rank'
-    stream = transfer(ompx_get_cuda_stream(int(omp_get_default_device(), C_INT), 0_C_INT), stream)
+    stream = transfer(target_stream(), stream)
     istat = cufftSetStream(cu_pFFT, stream); call check(istat, 'cufftSetStream FFT')
     istat = cufftSetStream(cu_pIFT, stream); call check(istat, 'cufftSetStream IFT')
     istat = cufftSetStream(cu_pRFT, stream); call check(istat, 'cufftSetStream RFT')
@@ -145,6 +149,14 @@ contains
     nullify (rVVdx, products)
     deallocate (VVdz, VVdx, VVdp)
   end subroutine free_fft
+
+#ifdef HAVE_CUDA
+  ! The CUDA stream of the synchronous OpenMP target regions.
+  function target_stream() result(stream)
+    type(C_PTR) :: stream
+    stream = ompx_get_cuda_stream(int(omp_get_default_device(), C_INT), 0_C_INT)
+  end function target_stream
+#endif
 
   ! Wait for everything queued on the device (the timer's boundaries).
   subroutine device_sync()

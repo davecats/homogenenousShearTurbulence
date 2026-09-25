@@ -25,6 +25,7 @@ module hst_params
   real(C_DOUBLE), save :: lx, ly, lz          ! box; ly is an input, lx, lz derived
   real(C_DOUBLE), save :: ystretch            ! tanh clustering of y at mid-box (0 = uniform)
   integer(C_INT), save :: line_chunk          ! x columns per line-solver batch (0 = default, hst_linsolve)
+  character(len=8), save :: transport         ! alltoall transport: 'auto', 'mpi' or 'nccl' (hst_mpi)
   !$omp declare target(ny)
 
   !------------------------------------------------------------- physics ----

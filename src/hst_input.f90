@@ -16,7 +16,7 @@ contains
     integer :: unit, ios
     real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
 
-    namelist /mesh/ nx, ny, nz, alfa0, beta0, ly, ystretch, line_chunk
+    namelist /mesh/ nx, ny, nz, alfa0, beta0, ly, ystretch, line_chunk, transport
     namelist /physics/ re, S, linear, exact_shift, s2_amplitude, s2_period, s2_start, &
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
     namelist /time_control/ deltat, cflmax, t_max, nstep, dt_stat, dt_field, dt_save, time, time_from_restart, timing
@@ -24,7 +24,7 @@ contains
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
-    ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI; ystretch = 0.0d0; line_chunk = 0
+    ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI; ystretch = 0.0d0; line_chunk = 0; transport = 'auto'
     re = 1000.0d0; S = 1.0d0; linear = .false.; exact_shift = .false.
     s2_amplitude = 0.0d0; s2_period = 0.0d0; s2_start = 0.0d0
     sl_amplitude = 0.0d0; sl_period = 1.0d0; sl_delta = 0.02d0; sl_start = 0.0d0; sl_bodyforce = .true.; sl_ramp = .false.
@@ -43,6 +43,10 @@ contains
     read (unit, nml=time_control); rewind (unit)
     read (unit, nml=init)
     close (unit)
+    if (transport /= 'auto' .and. transport /= 'mpi' .and. transport /= 'nccl') then
+      print *, 'ERROR: transport must be auto, mpi or nccl'
+      error stop 1
+    end if
     if (sl_amplitude /= 0.0d0 .and. s2_amplitude /= 0.0d0) then
       print *, 'ERROR: the Stokes layer and the spanwise shear S2 cannot both be active (as in hst-main)'
       error stop 1

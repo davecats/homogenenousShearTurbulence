@@ -11,6 +11,7 @@
   ly = 2.0
   ystretch = 0.0                ! tanh clustering of the y points at mid-box (0 = uniform)
   line_chunk = 0                ! x columns per line-solver batch (0 = all on the GPU, 16 on the CPU)
+  transport = 'auto'            ! alltoall transport: 'nccl' if built with NCCL=1 and one GPU per rank, else 'mpi'
 /
 
 &physics

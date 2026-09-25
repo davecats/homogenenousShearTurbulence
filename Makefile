@@ -3,6 +3,7 @@
 #   make            CPU build: gfortran (mpifort) + FFTW     -> build-cpu/hst
 #   make GPU=1      GPU build: nvfortran (NVHPC mpif90) + cuFFT, OpenMP offload
 #                                                            -> build-gpu/hst
+#   make GPU=1 NCCL=1   the same with NCCL for the alltoall (deck: transport)
 #   make test       also build the test programs (tests/*.f90, on tests/test_common.f90) into the build dir
 #   make clean
 #
@@ -50,8 +51,8 @@ endif
 
 ifeq ($(GPU),1)
   GPU_ARCH ?= cc86
-  FFLAGS   ?= -cpp -O3 -mp=gpu -gpu=$(GPU_ARCH) -cuda -Minfo=mp -DHAVE_CUDA
-  LIBS     ?= -cudalib=cufft
+  FFLAGS   ?= -cpp -O3 -mp=gpu -gpu=$(GPU_ARCH) -cuda -Minfo=mp -DHAVE_CUDA $(if $(NCCL),-DHAVE_NCCL)
+  LIBS     ?= -cudalib=cufft $(if $(NCCL),-cudalib=nccl)
   MODFLAG   = -module $(BUILD)
   BUILD    ?= build-gpu
 else
@@ -90,7 +91,7 @@ $(BUILD):
 
 # Module dependencies (so that `make -j` stays correct).
 $(BUILD)/hst_input.o:      $(BUILD)/hst_params.o
-$(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o $(BUILD)/hst_timer.o
+$(BUILD)/hst_mpi.o:        $(BUILD)/hst_params.o $(BUILD)/hst_timer.o $(BUILD)/hst_fft.o
 $(BUILD)/hst_fft.o:        $(BUILD)/hst_params.o
 $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_timer.o:      $(BUILD)/hst_params.o $(BUILD)/hst_fft.o
