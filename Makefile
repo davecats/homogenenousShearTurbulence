@@ -100,6 +100,12 @@ $(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
 $(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o
 $(BUILD)/hst_linsolve.o:   $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o
+# The line-solver kernel wants 202 registers per thread on the A100, two
+# blocks of 128 threads per SM; capped at 168 three blocks fit and the
+# solve is 1.3x faster at 256^3 (FINDINGS.md, session 5).  128 spills.
+ifeq ($(GPU),1)
+$(BUILD)/hst_linsolve.o:   FFLAGS += -gpu=maxregcount:168
+endif
 $(BUILD)/hst_stokes.o:     $(BUILD)/hst_params.o
 $(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_stokes.o $(BUILD)/hst_timer.o
 $(BUILD)/hst_stats.o:      $(BUILD)/hst_params.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_stokes.o
