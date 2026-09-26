@@ -1,4 +1,4 @@
-# Next session: what is left on one node, or the second node
+# Next session: the solver's occupancy, then the second node
 
 Copy the block at the end as the opening message of the next session.
 
@@ -82,43 +82,60 @@ the exposed alltoall is about 13% of the step.
 
 ## What is worth doing, in order
 
-1. **`buildrhs` (15%, 2.45 ms per call at 256^3, about half the
-   bandwidth).**  Its `VVdz` stencil reads are a plane apart between
-   neighbouring threads (half of every 32-byte sector wasted); the other
-   loop order was tried and lost (FINDINGS.md, session 3).  The fix is a
-   stencil-and-transpose tile: read `VVdz` in its own layout (iz
-   contiguous) into shared memory with the two ghost rows on each side,
-   apply the three stencils along iy in the tile, write `rhs` in its
-   layout (iy contiguous).  That is the CUDA Fortran pattern of
-   `transpose_tiled` (DESIGN.md 7 allows CUDA Fortran in hst_mpi and
-   hst_fft only; a kernel of hst_equations would need that rule
-   extended, or the kernel placed in hst_mpi next to the tile kernel).
-   `buildrhs_prepare` (5%) could then be folded into it (costed at 2% of
-   the step, FINDINGS.md session 4).
-2. **The line solver's remaining third (latency at 19% occupancy).**
-   Fewer registers by construction: the six accumulators of the rows-0-
-   and-1 recurrences could be a 2-vector recurrence with four; the ten
-   border coefficients are computed per line after the sweep and could be
+1. **The line solver's remaining third (latency at 19% occupancy).**
+   Local edits inside `cyclic_penta_solve`, no new kernel: fewer
+   registers by construction (the six accumulators of the rows-0-and-1
+   recurrences could be a 2-vector recurrence with four; the ten border
+   coefficients are computed per line after the sweep and could be
    hoisted; `coef` evaluates fifteen `der` products per row that a
-   per-kind table `cf(iy, j, 0:2)` (coef = cf0 + k2 cf1 + k2^2 cf2,
-   built once per call) would replace by three loads and two FMAs.  Or
-   two rows of loads in flight in the backward sweep.  Measure each with
-   the A/B job and `jobs/horeka_ncu.slurm` (occupancy, stall reasons);
-   the sweep's upper bound is about 1.1 ms at the bandwidth, so at most
-   another 7% of the 1-GPU step.
+   per-kind table `cf(iy, j, 0:2)` (coef = cf0 + k2 cf1 + k2^2 cf2, built
+   once per call) would replace by three loads and two FMAs), or two rows
+   of loads in flight in the backward sweep.  Measure each with the A/B
+   job and `jobs/horeka_ncu.slurm` (occupancy, stall reasons); the
+   sweep's upper bound is about 1.1 ms at the bandwidth, so at most
+   another 7% of the 1-GPU step.  Stop when the kernel is at the
+   bandwidth or the edits stop being local.
+2. **The second node.**  Measure `--nodes=2` with the present code first
+   (8 ranks over InfiniBand: NCCL handles it, the alltoall grows by the
+   inter-node share); then the y decomposition (WP6) if that is where
+   the time goes: DESIGN.md 7 (i), the only item left that has to add
+   real structure.
 3. **Deeper overlap** (the alltoalls of the first product group behind
    the products and `buildrhs` of the second; six products in memory at
    once): at most the exposed 13% of the 4-GPU step, more likely half of
-   it.  Only after 1 and 2.
-4. **y decomposition (WP6)** when going beyond one node: DESIGN.md 7 (i).
-   Measure `--nodes=2` with the present code first (8 ranks over
-   InfiniBand: NCCL handles it, the alltoall grows by the inter-node
-   share).
-5. **Memory per rank** at 512^3: 19.5 GB of transform buffers on one
+   it.  Only if the two-node measurement makes the alltoall dominant
+   again.
+4. **Memory per rank** at 512^3: 19.5 GB of transform buffers on one
    rank, 4.9 GB on four; the line-solver workspace with all columns is
    5 x 16 B x lines x ny (`line_chunk` bounds it); the transpose buffers
    are now two pairs of one field each (two thirds of the old three-field
    pair).
+
+**Not doing: `buildrhs` as a stencil-and-transpose tile** (decided
+2026-09-26, the user's call: the code should stay as simple as it is).
+The notes, in case it is ever needed.  `buildrhs` is 15% of the 1-GPU
+kernel time, 2.45 ms per call at 256^3 at about half the bandwidth: its
+fifteen `VVdz` stencil reads per product are a plane apart between
+neighbouring threads (iy innermost, `VVdz` has iz innermost), so half of
+every 32-byte sector is wasted; the other loop order (iz innermost, `rhs`
+strided) was tried in session 3 and lost, because with iy innermost the
+five-point windows of neighbouring threads overlap and L1 serves most of
+the reads.  The fix would be a tile through shared memory in the pattern
+of `transpose_tiled`: read a (iz, iy) tile of `VVdz` with two ghost rows
+on each side along iy, apply the three stencils (D0, D1, D2) along iy in
+the tile, write the result with iy contiguous.  Two forms: (a) the
+kernel also does the six product cases, the mean-mode packing and the
+Stokes `no_mean_vw` rule, i.e. the physics of `buildrhs` moves into a
+CUDA Fortran kernel while the CPU keeps the OpenMP version (two copies
+of the equations, and DESIGN.md 7's rule that CUDA Fortran stays in
+hst_mpi and hst_fft would need extending); or (b) the kernel only writes
+the three derivatives of each product into a temporary in the `rhs`
+layout and the present loop reads them contiguously (one copy of the
+physics, but nine field writes and reads per group added, which eats
+part of the gain).  About 100 lines either way.  Ceiling 7% of the
+1-GPU step at full bandwidth, realistically 3-4% for form (b).
+`buildrhs_prepare` (5%) could be folded into it (costed at 2% of the
+step, session 4).
 
 Things learned this session that the next one should not relearn
 (FINDINGS.md has the numbers): the cyclic solve needs no third pass
@@ -138,10 +155,12 @@ under `use_device_addr` if the compute stream is synchronised first.
 Repository ~/Codes/hst/homogenenousShearTurbulence (also ~/hst on HoreKA as
 an rsync copy), a GPU/CPU DNS for homogeneous shear turbulence; read
 README.md, FINDINGS.md (last two sections) and NEXT_SESSION.md.  Task:
-NEXT_SESSION.md item 1, buildrhs as a stencil-and-transpose tile (measure
-first with jobs/horeka_ncu.slurm, then A/B on the A100 with
-jobs/horeka_ab.slurm), then item 2 (the line solver's occupancy) if the
-ncu profile still shows it latency-bound; tests/run_tests.sh and
+NEXT_SESSION.md item 1, the line solver's remaining latency by local
+edits only (measure each idea with jobs/horeka_ncu.slurm and A/B on the
+A100 with jobs/horeka_ab.slurm; stop when the kernel reaches the
+bandwidth or the edits stop being local), then item 2, the two-node
+measurement; the code must stay as simple as it is (no new kernels; the
+buildrhs tile is documented and not to be done).  tests/run_tests.sh and
 tests/regression.sh green after every step (CPU, GPU, and the NCCL build
 on istmcetus), HoreKA jobs for the numbers.  Do not modify
 ~/Codes/hst/channel or ~/Codes/hst/hst-main.  Commit each step; push at
