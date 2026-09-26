@@ -1,7 +1,8 @@
 #!/bin/bash
 # HoreKA A/B: the same benchmarks on two builds back to back, ~/hst (A) and
-# ~/hst-exp (B, an rsync copy of the variant under test), on the same node.
-#   cd ~/hst && sbatch jobs/horeka_ab.slurm             (A_ROOT, B_ROOT, RUNS overridable)
+# ~/hst-exp (B, an rsync copy of the variant under test), on the same node;
+# an optional third build C_ROOT follows.
+#   cd ~/hst && sbatch jobs/horeka_ab.slurm             (A_ROOT, B_ROOT, C_ROOT, RUNS overridable)
 # Per build: bench_256 and bench_512 on 1 and 4 A100 with the per-phase timer
 # (4 GPUs: NCCL), then the nsys kernel summary of bench_256 on 1 A100.
 #SBATCH --job-name=hst-ab
@@ -16,6 +17,7 @@
 
 A_ROOT=${A_ROOT:-$HOME/hst}
 B_ROOT=${B_ROOT:-$HOME/hst-exp}
+C_ROOT=${C_ROOT:-}
 RUNS=${RUNS:-$HOME/hst-runs}
 source $A_ROOT/env/horeka.sh gpu
 NSYS=$(which nsys 2>/dev/null || ls $NVHPC_ROOT/compilers/bin/nsys $NVHPC_ROOT/profilers/*/bin/nsys 2>/dev/null | head -1)
@@ -39,7 +41,7 @@ for r in rows[:22]:
     mpirun -np $2 --bind-to none $1/build-gpu/hst hst.in | grep -E -A11 "s/step; writing|rror|time per phase"
   fi
 }
-for root in $A_ROOT $B_ROOT; do
+for root in $A_ROOT $B_ROOT $C_ROOT; do
   run $root 1 bench_256 20
   run $root 4 bench_256 20
   run $root 1 bench_512 10

@@ -14,20 +14,30 @@
 ! ny-2, ny-1 are the border rows), so
 !   1. P is factored, and three right-hand sides are forward-substituted in
 !      the same sweep: b, and the two columns that couple to the border,
-!   2. the three are back-substituted,
-!   3. a 2x2 Schur complement gives the border, and the interior is corrected.
+!   2. a 2x2 Schur complement gives the border,
+!   3. the back substitution of b minus the border columns times the border
+!      is the solution.
 ! This is the npy = 1 case of a distributed Schur solve.
 !
 ! The rows are generated on the fly inside the sweep, so the matrix is
-! never stored: the forward sweep keeps the two previous rows in registers
-! and writes only the three upper diagonals U (for the back substitution;
-! U(:, :, 0) holds the reciprocal of the pivot, so the sweeps multiply
-! where they would divide: one complex division per row instead of five)
-! and the substituted right-hand sides X, Y1, Y2.  Storage is interleaved,
-! line index first (U(iline, iy, j)), so that the threads of a kernel read
-! consecutive addresses.  Lines are processed in batches of line_chunk x
-! columns (deck parameter; 0 = all columns at once on the GPU, 16 on the
-! CPU) to bound that workspace.
+! never stored: the forward sweep keeps the two previous rows in registers,
+! divides each row by its pivot (one complex division per row) and writes
+! only the two upper entries U1, U2 (for the back substitution) and the
+! substituted right-hand sides X, Y1, Y2.  The Schur complement needs the
+! back-substituted values at the four rows coupled to the border: the last
+! two are the last two rows of the sweep, and the first two are inner
+! products of the substituted right-hand sides with the first two rows of
+! the inverse of the unit upper factor, which is a *forward* recurrence
+! (w(i) = -U1(i-1) w(i-1) - U2(i-2) w(i-2)), so both are accumulated in
+! the same sweep and the border is known before the back substitution.
+! The solve is then two passes over the line: the forward sweep reads the
+! right-hand side from the field and writes the five columns, the backward
+! sweep reads them and writes the solution into the field (192 bytes per
+! row instead of the 384 of a gather, a three-pass solve and a scatter).
+! Storage is interleaved, line index first (U1(iline, iy)), so that the
+! threads of a kernel read consecutive addresses.  Lines are processed in
+! batches of line_chunk x columns (deck parameter; 0 = all columns at once
+! on the GPU, 16 on the CPU) to bound that workspace.
 module hst_linsolve
 
   use, intrinsic :: iso_c_binding
@@ -41,7 +51,7 @@ module hst_linsolve
 
   ! the systems line_solve assembles (see there)
   integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_POISSON = 3, KIND_D0 = 4, KIND_DY = 5
-  complex(C_DOUBLE_COMPLEX), allocatable, save :: U(:, :, :), X(:, :), Y1(:, :), Y2(:, :)
+  complex(C_DOUBLE_COMPLEX), allocatable, save :: U1(:, :), U2(:, :), X(:, :), Y1(:, :), Y2(:, :)
   integer(C_INT), save :: nlines_max, chunk
 
 contains
@@ -56,17 +66,17 @@ contains
     if (line_chunk > 0) chunk = line_chunk
     chunk = min(chunk, nxB)
     nlines_max = (2*nz + 1)*chunk
-    allocate (U(nlines_max, 0:ny - 1, 0:2), X(nlines_max, 0:ny - 1))
+    allocate (U1(nlines_max, 0:ny - 1), U2(nlines_max, 0:ny - 1), X(nlines_max, 0:ny - 1))
     allocate (Y1(nlines_max, 0:ny - 1), Y2(nlines_max, 0:ny - 1))
-    U = 0; X = 0; Y1 = 0; Y2 = 0
-    !$omp target enter data map(to: U, X, Y1, Y2)
+    U1 = 0; U2 = 0; X = 0; Y1 = 0; Y2 = 0
+    !$omp target enter data map(to: U1, U2, X, Y1, Y2)
     if (has_terminal) write (*, '(A,I0,A,I0,A,F8.1,A)') '   line solver: batches of ', chunk, ' x columns, ', &
-      nlines_max, ' lines, workspace ', 6.0d0*16.0d0*nlines_max*ny/1024.0d0**2, ' MB per rank'
+      nlines_max, ' lines, workspace ', 5.0d0*16.0d0*nlines_max*ny/1024.0d0**2, ' MB per rank'
   end subroutine init_linsolve
 
   subroutine free_linsolve()
-    !$omp target exit data map(delete: U, X, Y1, Y2)
-    deallocate (U, X, Y1, Y2)
+    !$omp target exit data map(delete: U1, U2, X, Y1, Y2)
+    deallocate (U1, U2, X, Y1, Y2)
   end subroutine free_linsolve
 
   ! Assemble and solve one system per mode for fields with the layout of a
@@ -85,12 +95,12 @@ contains
   subroutine line_solve(kind, lambda, src, dst, shift_x, shift_z)
     integer(C_INT), intent(in) :: kind
     real(C_DOUBLE), intent(in) :: lambda
-    complex(C_DOUBLE_COMPLEX), intent(in) :: src(ny0 - 2:, -nz:, nx0:)
-    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(ny0 - 2:, -nz:, nx0:)
+    complex(C_DOUBLE_COMPLEX), intent(in), contiguous :: src(ny0 - 2:, -nz:, nx0:)
+    complex(C_DOUBLE_COMPLEX), intent(inout), contiguous :: dst(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in), optional :: shift_x, shift_z
-    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, j, il, ncol, n, ld
+    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, il, ncol, n, ld
     real(C_DOUBLE) :: sx, sz
-    complex(C_DOUBLE_COMPLEX) :: b, ph
+    complex(C_DOUBLE_COMPLEX) :: ph
 
     if (present(shift_x)) then
       sx = shift_x; sz = shift_z
@@ -103,49 +113,22 @@ contains
     do ix0 = nx0, nxN, chunk
       ix1 = min(ix0 + chunk - 1, nxN)
       nl = (ix1 - ix0 + 1)*ncol
-      ! gather the right-hand sides into the interleaved layout
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, src, der, kind, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, j, il, b)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            if (kind == KIND_DY) then
-              b = 0.0d0
-              do j = -2, 2
-                b = b + der(iy, 1, j)*src(iy + j, iz, ix)
-              end do
-            else
-              b = src(iy, iz, ix)
-            end if
-            X(il, iy) = b
-          end do
-        end do
-      end do
       ! one thread per line: build the rows, factor and solve
       !$omp target teams distribute parallel do default(none) &
-      !$omp shared(U, X, Y1, Y2, der, k2, ni, lambda, kind, ix0, nz, ncol, alfa0, beta0, sx, sz, n, nl, ld) &
-      !$omp private(il, ix, iz, ph)
+      !$omp shared(U1, U2, X, Y1, Y2, src, dst, der, k2, ni, lambda, kind, ix0, nz, nx0, ncol, alfa0, beta0, sx, sz, n, nl, ld) &
+      !$omp private(il, ix, iz, iy, ph)
       do il = 1, nl
         ix = ix0 + (il - 1)/ncol
         iz = mod(il - 1, ncol) - nz
-        ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
-        call cyclic_penta_solve(kind, lambda, ni, k2(iz, ix), ph, n, ld, il, der, U, X, Y1, Y2)
-      end do
-      ! scatter the solutions
-      !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(X, dst, kind, ix0, ix1, nz, ny, ncol) private(ix, iz, iy, il)
-      do ix = ix0, ix1
-        do iz = -nz, nz
-          do iy = 0, ny - 1
-            il = (iz + nz + 1) + ncol*(ix - ix0)
-            if (ix == 0 .and. iz == 0 .and. kind == KIND_D2V) then
-              dst(iy, iz, ix) = 0.0d0
-            else if (.not. (ix == 0 .and. iz == 0 .and. kind == KIND_POISSON)) then
-              dst(iy, iz, ix) = X(il, iy)
-            end if
+        if (ix == 0 .and. iz == 0 .and. kind == KIND_D2V) then
+          do iy = 0, n - 1
+            dst(iy, iz, ix) = 0.0d0
           end do
-        end do
+        else if (.not. (ix == 0 .and. iz == 0 .and. kind == KIND_POISSON)) then
+          ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
+          call cyclic_penta_solve(kind, lambda, ni, k2(iz, ix), ph, n, ld, il, (iz + nz + 1) + ncol*(ix - nx0), &
+                                  der, U1, U2, X, Y1, Y2, src, dst)
+        end if
       end do
     end do
   end subroutine line_solve
@@ -169,31 +152,58 @@ contains
     end select
   end function coef
 
-  ! One line, right-hand side and solution in X(il, :).  Must stay inside
-  ! this module: a declare-target procedure called across a module boundary
-  ! does not survive nvlink.
-  subroutine cyclic_penta_solve(kind, lambda, ni, kk, ph, n, ld, il, der, U, X, Y1, Y2)
+  ! Right-hand side of row iy of line jl of src (the field's lines in memory
+  ! order): the field itself, or its D1 stencil through the ghost rows for
+  ! KIND_DY.
+  complex(C_DOUBLE_COMPLEX) function rhs_row(kind, n, der, src, iy, jl)
     !$omp declare target
-    integer(C_INT), intent(in) :: kind, n, ld, il
+    integer(C_INT), intent(in) :: kind, n, iy, jl
+    real(C_DOUBLE), intent(in) :: der(0:n - 1, 0:3, -2:2)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: src(-2:n + 1, *)
+    integer(C_INT) :: j
+    if (kind == KIND_DY) then
+      rhs_row = 0.0d0
+      do j = -2, 2
+        rhs_row = rhs_row + der(iy, 1, j)*src(iy + j, jl)
+      end do
+    else
+      rhs_row = src(iy, jl)
+    end if
+  end function rhs_row
+
+  ! One line: right-hand side in src(:, jl), solution to dst(:, jl) (line jl
+  ! of the field in memory order, ghost rows included), workspace column il.
+  ! Must stay inside this module: a declare-target procedure called across
+  ! a module boundary does not survive nvlink.
+  subroutine cyclic_penta_solve(kind, lambda, ni, kk, ph, n, ld, il, jl, der, U1, U2, X, Y1, Y2, src, dst)
+    !$omp declare target
+    integer(C_INT), intent(in) :: kind, n, ld, il, jl
     real(C_DOUBLE), intent(in) :: lambda, ni, kk
     complex(C_DOUBLE_COMPLEX), intent(in) :: ph
     real(C_DOUBLE), intent(in) :: der(0:n - 1, 0:3, -2:2)
-    complex(C_DOUBLE_COMPLEX), intent(inout) :: U(ld, 0:n - 1, 0:2), X(ld, 0:n - 1)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: U1(ld, 0:n - 1), U2(ld, 0:n - 1), X(ld, 0:n - 1)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: Y1(ld, 0:n - 1), Y2(ld, 0:n - 1)
+    complex(C_DOUBLE_COMPLEX), intent(in) :: src(-2:n + 1, *)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: dst(-2:n + 1, *)
     integer(C_INT) :: i, j, m
-    complex(C_DOUBLE_COMPLEX) :: a(-2:2), wrap, l1, l2, bx, b1, b2, rp     ! row i: substituted right-hand sides, 1/pivot
-    complex(C_DOUBLE_COMPLEX) :: rp1, u11, u12, bx1, b11, b21     ! row i-1: 1/pivot, upper entries, substituted rhs
-    complex(C_DOUBLE_COMPLEX) :: rp2, u21, u22, bx2, b12, b22     ! row i-2
+    complex(C_DOUBLE_COMPLEX) :: a(-2:2), wrap, l, rp, t1, t2, bx, p, q     ! row i: upper entries and right-hand sides (b, border columns), scaled by 1/pivot
+    complex(C_DOUBLE_COMPLEX) :: u11, u12, x1, p1, q1                       ! row i-1, scaled
+    complex(C_DOUBLE_COMPLEX) :: u21, u22, x2, p2, q2                       ! row i-2, scaled
+    complex(C_DOUBLE_COMPLEX) :: w, w1, w2, v, v1, v2                       ! rows 0 and 1 of the inverse unit upper factor at i, i-1, i-2
+    complex(C_DOUBLE_COMPLEX) :: sx0, sp0, sq0, sx1, sp1, sq1               ! their inner products with the substituted right-hand sides
+    complex(C_DOUBLE_COMPLEX) :: xm1, pm1, qm1, xm2, pm2, qm2               ! back-substituted rows m-1, m-2
     complex(C_DOUBLE_COMPLEX) :: c1m4, c1m3, c10, c2m3, c20, c21, d11, d12, d21, d22
-    complex(C_DOUBLE_COMPLEX) :: s1, s2, m11, m12, m21, m22, det, xb1, xb2
-    complex(C_DOUBLE_COMPLEX) :: xk1, xk2, yk1, yk2, zk1, zk2
+    complex(C_DOUBLE_COMPLEX) :: s1, s2, m11, m12, m21, m22, det, xb1, xb2, xk, xk1, xk2
 
     m = n - 2
     ! Forward sweep over the interior rows: generate row i, move its border
-    ! columns (n-2 -> Y1, n-1 -> Y2) out of P, eliminate with rows i-2 and
-    ! i-1, store the upper part and the substituted right-hand sides.
-    rp1 = 1.0d0; u11 = 0.0d0; u12 = 0.0d0; bx1 = 0.0d0; b11 = 0.0d0; b21 = 0.0d0
-    rp2 = 1.0d0; u21 = 0.0d0; u22 = 0.0d0; bx2 = 0.0d0; b12 = 0.0d0; b22 = 0.0d0
+    ! columns (n-2 -> p, n-1 -> q) out of P, eliminate with rows i-2 and
+    ! i-1, divide by the pivot, store the upper part and the substituted
+    ! right-hand sides; accumulate the first two rows of the back substitution.
+    u11 = 0.0d0; u12 = 0.0d0; x1 = 0.0d0; p1 = 0.0d0; q1 = 0.0d0
+    u21 = 0.0d0; u22 = 0.0d0; x2 = 0.0d0; p2 = 0.0d0; q2 = 0.0d0
+    w1 = 0.0d0; w2 = 0.0d0; v1 = 0.0d0; v2 = 0.0d0
+    sx0 = 0.0d0; sp0 = 0.0d0; sq0 = 0.0d0; sx1 = 0.0d0; sp1 = 0.0d0; sq1 = 0.0d0
     do i = 0, m - 1
       do j = -2, 2
         wrap = 1.0d0
@@ -201,38 +211,49 @@ contains
         if (i + j < 0) wrap = conjg(ph)
         a(j) = coef(kind, lambda, ni, kk, n, der, i, j)*wrap
       end do
-      b1 = 0.0d0; b2 = 0.0d0
+      p = 0.0d0; q = 0.0d0
       if (i == 0) then
-        b1 = a(-2); b2 = a(-1); a(-2) = 0.0d0; a(-1) = 0.0d0
+        p = a(-2); q = a(-1); a(-2) = 0.0d0; a(-1) = 0.0d0
       end if
       if (i == 1) then
-        b2 = a(-2); a(-2) = 0.0d0
+        q = a(-2); a(-2) = 0.0d0
       end if
       if (i == m - 2) then
-        b1 = a(2); a(2) = 0.0d0
+        p = a(2); a(2) = 0.0d0
       end if
       if (i == m - 1) then
-        b1 = a(1); b2 = a(2); a(1) = 0.0d0; a(2) = 0.0d0
+        p = a(1); q = a(2); a(1) = 0.0d0; a(2) = 0.0d0
       end if
-      bx = X(il, i)
+      bx = rhs_row(kind, n, der, src, i, jl)
       if (i >= 2) then
-        l2 = a(-2)*rp2
-        a(-1) = a(-1) - l2*u21
-        a(0) = a(0) - l2*u22
-        bx = bx - l2*bx2; b1 = b1 - l2*b12; b2 = b2 - l2*b22
+        l = a(-2)
+        a(-1) = a(-1) - l*u21
+        a(0) = a(0) - l*u22
+        bx = bx - l*x2; p = p - l*p2; q = q - l*q2
       end if
       if (i >= 1) then
-        l1 = a(-1)*rp1
-        a(0) = a(0) - l1*u11
-        a(1) = a(1) - l1*u12
-        bx = bx - l1*bx1; b1 = b1 - l1*b11; b2 = b2 - l1*b21
+        l = a(-1)
+        a(0) = a(0) - l*u11
+        a(1) = a(1) - l*u12
+        bx = bx - l*x1; p = p - l*p1; q = q - l*q1
       end if
       rp = 1.0d0/a(0)
-      U(il, i, 0) = rp; U(il, i, 1) = a(1); U(il, i, 2) = a(2)
-      X(il, i) = bx; Y1(il, i) = b1; Y2(il, i) = b2
-      rp2 = rp1; u21 = u11; u22 = u12; bx2 = bx1; b12 = b11; b22 = b21
-      rp1 = rp; u11 = a(1); u12 = a(2); bx1 = bx; b11 = b1; b21 = b2
+      t1 = a(1)*rp; t2 = a(2)*rp; bx = bx*rp; p = p*rp; q = q*rp
+      U1(il, i) = t1; U2(il, i) = t2; X(il, i) = bx; Y1(il, i) = p; Y2(il, i) = q
+      ! rows 0 and 1 of the inverse of the unit upper factor: w(0) = 1, v(1) = 1,
+      ! w(i) = -U1(i-1) w(i-1) - U2(i-2) w(i-2), the same for v
+      w = -(u11*w1 + u22*w2); if (i == 0) w = 1.0d0
+      v = -(u11*v1 + u22*v2); if (i == 1) v = 1.0d0
+      sx0 = sx0 + w*bx; sp0 = sp0 + w*p; sq0 = sq0 + w*q
+      sx1 = sx1 + v*bx; sp1 = sp1 + v*p; sq1 = sq1 + v*q
+      w2 = w1; w1 = w; v2 = v1; v1 = v
+      u21 = u11; u22 = u12; x2 = x1; p2 = p1; q2 = q1
+      u11 = t1; u12 = t2; x1 = bx; p1 = p; q1 = q
     end do
+    ! Back-substituted values at the rows coupled to the border: m-1 (its
+    ! upper entries are border columns), m-2 (U2 = 0 there), and 0, 1 (the sums).
+    xm1 = x1; pm1 = p1; qm1 = q1
+    xm2 = x2 - u21*xm1; pm2 = p2 - u21*pm1; qm2 = q2 - u21*qm1
     ! Border rows: their interior couplings (C) and their 2x2 block (D).
     c1m4 = coef(kind, lambda, ni, kk, n, der, n - 2, -2)
     c1m3 = coef(kind, lambda, ni, kk, n, der, n - 2, -1)
@@ -244,36 +265,25 @@ contains
     d12 = coef(kind, lambda, ni, kk, n, der, n - 2, 1)
     d21 = coef(kind, lambda, ni, kk, n, der, n - 1, -1)
     d22 = coef(kind, lambda, ni, kk, n, der, n - 1, 0)
-    ! Backward sweep for the three right-hand sides.
-    xk1 = X(il, m - 1)*U(il, m - 1, 0); yk1 = Y1(il, m - 1)*U(il, m - 1, 0); zk1 = Y2(il, m - 1)*U(il, m - 1, 0)
-    X(il, m - 1) = xk1; Y1(il, m - 1) = yk1; Y2(il, m - 1) = zk1
-    xk2 = xk1; yk2 = yk1; zk2 = zk1
-    xk1 = (X(il, m - 2) - U(il, m - 2, 1)*xk1)*U(il, m - 2, 0)
-    yk1 = (Y1(il, m - 2) - U(il, m - 2, 1)*yk1)*U(il, m - 2, 0)
-    zk1 = (Y2(il, m - 2) - U(il, m - 2, 1)*zk1)*U(il, m - 2, 0)
-    X(il, m - 2) = xk1; Y1(il, m - 2) = yk1; Y2(il, m - 2) = zk1
-    do i = m - 3, 0, -1
-      bx = (X(il, i) - U(il, i, 1)*xk1 - U(il, i, 2)*xk2)*U(il, i, 0)
-      b1 = (Y1(il, i) - U(il, i, 1)*yk1 - U(il, i, 2)*yk2)*U(il, i, 0)
-      b2 = (Y2(il, i) - U(il, i, 1)*zk1 - U(il, i, 2)*zk2)*U(il, i, 0)
-      X(il, i) = bx; Y1(il, i) = b1; Y2(il, i) = b2
-      xk2 = xk1; yk2 = yk1; zk2 = zk1
-      xk1 = bx; yk1 = b1; zk1 = b2
-    end do
-    ! 2x2 Schur complement for the border, then the interior correction.
-    s1 = X(il, n - 2) - (c1m4*X(il, m - 2) + c1m3*X(il, m - 1) + c10*X(il, 0))
-    s2 = X(il, n - 1) - (c2m3*X(il, m - 1) + c20*X(il, 0) + c21*X(il, 1))
-    m11 = d11 - (c1m4*Y1(il, m - 2) + c1m3*Y1(il, m - 1) + c10*Y1(il, 0))
-    m12 = d12 - (c1m4*Y2(il, m - 2) + c1m3*Y2(il, m - 1) + c10*Y2(il, 0))
-    m21 = d21 - (c2m3*Y1(il, m - 1) + c20*Y1(il, 0) + c21*Y1(il, 1))
-    m22 = d22 - (c2m3*Y2(il, m - 1) + c20*Y2(il, 0) + c21*Y2(il, 1))
+    ! 2x2 Schur complement for the border.
+    s1 = rhs_row(kind, n, der, src, n - 2, jl) - (c1m4*xm2 + c1m3*xm1 + c10*sx0)
+    s2 = rhs_row(kind, n, der, src, n - 1, jl) - (c2m3*xm1 + c20*sx0 + c21*sx1)
+    m11 = d11 - (c1m4*pm2 + c1m3*pm1 + c10*sp0)
+    m12 = d12 - (c1m4*qm2 + c1m3*qm1 + c10*sq0)
+    m21 = d21 - (c2m3*pm1 + c20*sp0 + c21*sp1)
+    m22 = d22 - (c2m3*qm1 + c20*sq0 + c21*sq1)
     det = m11*m22 - m12*m21
     xb1 = (m22*s1 - m12*s2)/det
     xb2 = (m11*s2 - m21*s1)/det
-    X(il, n - 2) = xb1
-    X(il, n - 1) = xb2
-    do i = 0, m - 1
-      X(il, i) = X(il, i) - Y1(il, i)*xb1 - Y2(il, i)*xb2
+    dst(n - 2, jl) = xb1
+    dst(n - 1, jl) = xb2
+    ! Backward sweep of b minus the border columns times the border, into dst
+    ! (U1(m-1), U2(m-1), U2(m-2) are zero, so one recurrence serves all rows).
+    xk1 = 0.0d0; xk2 = 0.0d0
+    do i = m - 1, 0, -1
+      xk = X(il, i) - Y1(il, i)*xb1 - Y2(il, i)*xb2 - U1(il, i)*xk1 - U2(il, i)*xk2
+      dst(i, jl) = xk
+      xk2 = xk1; xk1 = xk
     end do
   end subroutine cyclic_penta_solve
 
