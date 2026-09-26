@@ -144,23 +144,24 @@ production = dissipation (FINDINGS.md).
 ## Performance
 
 Seconds per full time step (three substeps), `examples/bench_*.in`, after
-the transpose-kernel session of FINDINGS.md (in brackets: after the
-multi-GPU pass, and after the single-GPU performance pass):
+the line-solver and overlap session of FINDINGS.md (in brackets: after
+the transpose-kernel session, and after the multi-GPU pass):
 
 | grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
 | --- | --- | --- | --- | --- |
-| 64 x 128 x 64 | 0.0145 (0.016, 0.019) | | 0.127 (0.13, 0.17) | 0.89 (0.89, 1.03) |
-| 256 x 256 x 256 | 0.099 (0.113, 0.115) | 0.039 (0.042, 0.101) | 0.98 (1.25, 1.33) | |
-| 512 x 512 x 512 | 0.819 (0.955, 0.970) | 0.262 (0.296, 0.809) | | |
+| 64 x 128 x 64 | 0.0134 (0.0145, 0.016) | | 0.127 (0.127, 0.13) | 0.89 (0.89, 0.89) |
+| 256 x 256 x 256 | 0.087 (0.099, 0.113) | 0.034 (0.039, 0.042) | 0.98 (0.98, 1.25) | |
+| 512 x 512 x 512 | 0.687 (0.819, 0.955) | 0.227 (0.262, 0.296) | | |
 
 Four A100 use the NCCL transport (`make GPU=1 NCCL=1`); with MPI's
 alltoall the 4-GPU step is 2.5-3x longer (FINDINGS.md).  The RTX 3060
 runs double precision at 1/64 rate, so it gains little from what helps
 the A100; `timing = .true.` prints where the time goes.  Four A100 are
-2.6x one at 256^3 and 3.1x at 512^3; on one GPU the largest items are
-now the line solver (27% of the kernel time), the FFTs (25%) and
-`buildrhs` (14%), on four the alltoall (23%); a second node needs WP6 or
-a two-node measurement first.
+2.6x one at 256^3 and 3.0x at 512^3; on one GPU the largest items are
+the line solver (24% of the kernel time, latency-bound at 19%
+occupancy), the FFTs (28%) and `buildrhs` (15%), on four the exposed part
+of the alltoall (about 13% of the step; the rest is hidden behind the
+transforms); a second node needs WP6 or a two-node measurement first.
 
 ## Status
 

@@ -563,3 +563,151 @@ against the CPU run at 3e-14):
 | bench_64 | 0.0145 | | 0.0160 / |
 | bench_256 | 0.0986 | 0.0385 | 0.113 / 0.0425 |
 | bench_512 | 0.819 | 0.262 | 0.955 / 0.296 |
+
+---
+
+## The line solver (2026-09-26, session 5)
+
+The handoff called the sweep kernel latency-bound: 136 registers per
+thread, 19% occupancy, 1.1 GB moved in 2.05 ms at 256^3, "35% of the
+A100".  The byte count was wrong.  Counting the three passes of the
+old solve (forward: one read and six writes per row; backward: six reads
+and three writes; correction: three reads and one write, 16 bytes each)
+gives 320 bytes per row, 2.67 GB per call, and Nsight Compute on the A100
+(`jobs/horeka_ncu.slurm`, new: the hardware counters are open on the
+HoreKA compute nodes, not on the ISTM boxes) confirms it: 1.29 GB read +
+1.39 GB written in 2.11 ms, **82% of the DRAM bandwidth** (the gather
+kernel before it another 0.27 GB in 0.79 ms at 22%, the scatter 0.29 GB
+in 0.41 ms).  The sweep was bandwidth-bound; the lever was bytes, not
+threads.
+
+**Two passes instead of five.**  The third pass existed because the
+2x2 Schur complement for the border needs the back-substituted values
+of the three right-hand sides at rows 0 and 1, the far end of the back
+substitution.  But x(0) = e_0^T U^-1 x' is an inner product of the
+forward-substituted right-hand side with the first row of the inverse of
+the unit upper factor, and that row obeys a *forward* recurrence, w(i) =
+-U1(i-1) w(i-1) - U2(i-2) w(i-2) (the same for row 1 with v(1) = 1).  Two
+short recurrences and six accumulators in the forward sweep give the
+four values the Schur complement needs (rows m-2, m-1 are the last two
+rows of the sweep), so the border is known before any back
+substitution, and one backward sweep of X - Y1 xb1 - Y2 xb2 is the
+solution.  With the rows divided by their pivots as they are stored
+(U1, U2, X, Y1, Y2 scaled; the elimination then needs no multipliers),
+the solve is: forward sweep reading the right-hand side straight from
+the field and writing five columns, backward sweep reading them and
+writing the solution straight into the field, 192 bytes per row, one
+kernel, no gather, no scatter, no correction pass.  The CPU path is the
+same code.  Accuracy unchanged: `test_linsolve` at 2e-15 relative, the
+regression decks at 7e-14 against the stored references (which were not
+updated), the NCCL build the same.
+
+A100, job 5164142 (`jobs/horeka_ab.slurm`, `~/hst` at the previous
+commit against `~/hst-exp`):
+
+| deck, GPUs | implicit solves before | after | step before | after |
+| --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0185 | 0.0131 | 0.0980 | 0.0918 |
+| bench_256, 4 | 0.0070 | 0.0048 | 0.0413 | 0.0386 |
+| bench_512, 1 | 0.1668 | 0.0763 | 0.8228 | 0.6929 |
+| bench_512, 4 | 0.0382 | 0.0263 | 0.2691 | 0.2626 |
+
+(The "ghosts, dv/dy, u and w" phase holds a fourth solve per substep and
+went from 0.0943 to 0.0539 at 512^3.)  At 512^3 the solver is 2.2x
+faster and the step 16%; at 256^3 only 1.3x, and the second Nsight
+Compute run (job 5164154) says why: the new kernel moves 1.59 GB per
+call (the 192 bytes per row) but at **33% of the bandwidth**, 3.1 ms
+under the profiler's locked clocks, 2.39 ms in nsys.  It has 202
+registers per thread on cc80 (178 on cc86), so two blocks of 128
+threads per SM, 12.5% occupancy, and its 255 blocks make one full wave
+and a partial one of 39 blocks; the stalls are waits on global loads.
+Halving the bytes has turned a bandwidth-bound kernel into a
+latency-bound one at the small grid; at 512^3 (1022 blocks, five waves)
+the tail does not matter and the bandwidth is reached.
+
+**Register cap.**  nvfortran gives the kernel 202 registers on cc80 (178
+on cc86) for the ten complex values of the two previous rows, the two
+recurrences, the six accumulators and the current row.  Capped with
+`-gpu=maxregcount` (a per-file flag in the Makefile), three-way A/B on
+the A100 (job 5164153):
+
+| deck, GPUs | solves, 202 regs | 168 (3 blocks/SM) | 128 (4 blocks/SM) | step, 202 | 168 | 128 |
+| --- | --- | --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0131 | 0.0108 | 0.0117 | 0.0913 | 0.0869 | 0.0880 |
+| bench_256, 4 | 0.0049 | 0.0048 | 0.0051 | 0.0362 | 0.0356 | 0.0360 |
+| bench_512, 1 | 0.0762 | 0.0767 | 0.0874 | 0.689 | 0.686 | 0.700 |
+| bench_512, 4 | 0.0261 | 0.0218 | 0.0243 | 0.2466 | 0.2388 | 0.2412 |
+
+168 (no spills, `LOCAL:0`) takes the sweep kernel from 2.41 to 1.86 ms
+per call at 256^3 (nsys) and helps wherever a GPU has about 255 blocks
+(one GPU at 256^3, four at 512^3); 128 spills to local memory and loses
+at 512^3.  The cap is in the Makefile for `hst_linsolve.o` only.  At
+1.86 ms the kernel is at 0.85 TB/s, 55% of the bandwidth, so a third of
+its time is still latency at 19% occupancy; what would take it further
+is fewer registers by construction (the six accumulators could be four
+if rows 0 and 1 were handled as one 2-vector recurrence, or the border
+coefficients computed once per line outside the sweep), or two rows of
+loads in flight in the backward sweep.  The solver is 12% of the step
+now, so this is where the session stopped.
+
+## Overlap of the alltoall with the transforms (2026-09-26, session 5)
+
+Handoff item 2, conditional on the alltoall still being 18% or more of
+the 4-GPU step: it was 22% at 256^3 and 19% at 512^3 after the solver
+change.  The transforms and transposes now go field by field
+(`hst_transforms`): the z transform of field m, then `transpose_start(m)`
+(pack and start the alltoall), then the x side of field m-1
+(`transpose_finish`: wait, unpack; padding; x transform), so the
+alltoall of one field runs while the neighbours are transformed.  Two
+send/receive buffer pairs alternate between fields; `start(m+2)` follows
+`finish(m)`, which makes the double buffering safe (`hst_mpi`).  NCCL
+runs on a second CUDA stream: `ev_packed` (recorded on the compute
+stream after the pack) gates the transfer, `ev_done` (recorded on the
+communication stream) gates the unpack, and the host never waits.  MPI
+posts `MPI_Ialltoall` after `cudaStreamSynchronize` of the compute
+stream and waits in `finish`; the CPU build takes the same path.  On one
+rank `finish` does the tiled local transpose per field.  cuFFT and FFTW
+plans are per field, which costs nothing (same kernels, a third of the
+batch, three times: the 1-GPU step is unchanged to 0.5%), and the
+results are bit-identical to the batched ones.  The timer's pack/unpack
+and alltoall phases are gone: the alltoall has no boundary any more, only
+its exposed part costs, and that shows up in the transform and product
+phases; nsys shows the NCCL kernels on their own stream.
+
+A100, job 5164159 (`~/hst-exp`, the two-pass solver without the register
+cap, against `~/hst-exp4`, the same with the overlap):
+
+| deck, GPUs | step before | after | of which transforms + transposes + products before | after |
+| --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0913 | 0.0922 | 0.0620 | 0.0628 |
+| bench_256, 4 | 0.0388 | 0.0345 | 0.0282 (alltoall 0.0087) | 0.0238 |
+| bench_512, 1 | 0.6907 | 0.6903 | 0.5051 | 0.5047 |
+| bench_512, 4 | 0.2530 | 0.2350 | 0.1947 (alltoall 0.0493) | 0.1766 |
+
+The 4-GPU step gains 11% at 256^3 and 7% at 512^3: about half of the
+alltoall is hidden at 256^3, 37% at 512^3.  What stays exposed: within a
+batch of three fields the first alltoall has nothing before it to hide
+behind and the last only the unpack and x transform of field 2, so about
+a third of the transfer time is structurally exposed; and the kernels it
+overlaps are themselves bandwidth-bound, while NCCL's copies use the
+same HBM (the timed phases grew by more than the hidden time would
+predict).  A deeper pipeline across batches (the alltoalls of the first
+product group behind the products and `buildrhs` of the second) would
+address the first part at the price of six products in memory; not done.
+
+**Result** of the session (`jobs/horeka_bench_all.slurm`, job 5164166,
+all changes in: the two-pass solver with the register cap and the
+overlap; the README table; the 4-GPU test suite and the 4-GPU field
+against the CPU run at 2.8e-14, job 5164165):
+
+| deck | 1 A100 | 4 A100 | before the session, 1 / 4 |
+| --- | --- | --- | --- |
+| bench_64 | 0.0134 | | 0.0145 / |
+| bench_256 | 0.0874 | 0.0338 | 0.0986 / 0.0385 |
+| bench_512 | 0.687 | 0.227 | 0.819 / 0.262 |
+
+One A100: 11% at 256^3, 16% at 512^3 (the solver); four: 12% and 13%
+(the solver and the overlap).  Kernel time on one A100 at 256^3 after
+the session: line solver 24%, `buildrhs` 15%, cuFFT 28% (four
+transforms), tiled transpose 9%, `build_products` 8.5%,
+`buildrhs_prepare` 5%, `assemble_vvdz` 4%.
