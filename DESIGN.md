@@ -23,10 +23,13 @@ the code departed from this plan:
   kernel builds each row on the fly and keeps the two previous rows in
   registers, so the assembly kernel and two thirds of the workspace are
   gone (FINDINGS.md, performance).
-- The transforms and transposes carry three fields at once (u, v, w, or
-  three of the six products) and the x transforms run in place, with the
-  real buffers as pointer views of the complex ones; cuFFT runs on the
-  OpenMP target stream, without host synchronisation (FINDINGS.md).
+- The transforms and transposes go field by field with the channel's
+  double buffering after all (WP1 dropped it): the alltoall of one field
+  runs on a second CUDA stream (NCCL) or as a non-blocking MPI call while
+  the transforms of its neighbours proceed (session 5, FINDINGS.md).  The
+  x transforms run in place, with the real buffers as pointer views of
+  the complex ones; cuFFT runs on the OpenMP target stream, without host
+  synchronisation.
 - The tests are Fortran programs (`tests/test_*.f90` on a shared harness)
   run by `tests/run_tests.sh`, plus `tests/regression.sh` against stored
   fields; the layout of section 4 is the README's.

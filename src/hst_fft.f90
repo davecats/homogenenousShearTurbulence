@@ -97,10 +97,10 @@ contains
 
 #ifdef HAVE_FFTW
     n_z = [nzd]; n_x = [2*nxd]; e_c = [nxd + 1]; e_r = [2*(nxd + 1)]
-    pFFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny*3, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_FORWARD, plan_type)
-    pIFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny*3, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_BACKWARD, plan_type)
-    pRFT = fftw_plan_many_dft_c2r(1, n_x, nzB*fft_ny*3, VVdx, e_c, 1, nxd + 1, rVVdx, e_r, 1, 2*(nxd + 1), plan_type)
-    pHFT = fftw_plan_many_dft_r2c(1, n_x, nzB*fft_ny*3, products, e_r, 1, 2*(nxd + 1), VVdp, e_c, 1, nxd + 1, plan_type)
+    pFFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_FORWARD, plan_type)
+    pIFT = fftw_plan_many_dft(1, n_z, nxB*fft_ny, VVdz, n_z, 1, nzd, VVdz, n_z, 1, nzd, FFTW_BACKWARD, plan_type)
+    pRFT = fftw_plan_many_dft_c2r(1, n_x, nzB*fft_ny, VVdx, e_c, 1, nxd + 1, rVVdx, e_r, 1, 2*(nxd + 1), plan_type)
+    pHFT = fftw_plan_many_dft_r2c(1, n_x, nzB*fft_ny, products, e_r, 1, 2*(nxd + 1), VVdp, e_c, 1, nxd + 1, plan_type)
     istat = 0
 #endif
 #ifdef HAVE_CUDA
@@ -108,16 +108,16 @@ contains
     inembed(1) = nxd + 1
     onembed(1) = 2*(nxd + 1)
     istat = cufftCreate(cu_pIFT); istat = cufftSetAutoAllocation(cu_pIFT, 0)
-    istat = cufftMakePlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3, ws(1))
+    istat = cufftMakePlan1d(cu_pIFT, nzd, CUFFT_Z2Z, fft_ny*nxB, ws(1))
     call check(istat, 'cufftMakePlan1d IFT')
     istat = cufftCreate(cu_pFFT); istat = cufftSetAutoAllocation(cu_pFFT, 0)
-    istat = cufftMakePlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB*3, ws(2))
+    istat = cufftMakePlan1d(cu_pFFT, nzd, CUFFT_Z2Z, fft_ny*nxB, ws(2))
     call check(istat, 'cufftMakePlan1d FFT')
     istat = cufftCreate(cu_pRFT); istat = cufftSetAutoAllocation(cu_pRFT, 0)
-    istat = cufftMakePlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny*3, ws(3))
+    istat = cufftMakePlanMany(cu_pRFT, 1, n, inembed, 1, nxd + 1, onembed, 1, 2*(nxd + 1), CUFFT_Z2D, nzB*fft_ny, ws(3))
     call check(istat, 'cufftMakePlanMany RFT')
     istat = cufftCreate(cu_pHFT); istat = cufftSetAutoAllocation(cu_pHFT, 0)
-    istat = cufftMakePlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny*3, ws(4))
+    istat = cufftMakePlanMany(cu_pHFT, 1, n, onembed, 1, 2*(nxd + 1), inembed, 1, nxd + 1, CUFFT_D2Z, nzB*fft_ny, ws(4))
     call check(istat, 'cufftMakePlanMany HFT')
     allocate (work(max(maxval(ws), 1_C_SIZE_T)))
     istat = cufftSetWorkArea(cu_pIFT, work); call check(istat, 'cufftSetWorkArea IFT')
@@ -175,56 +175,62 @@ contains
     end if
   end subroutine check
 
-  ! Complex transform of VVdz along z, in place: forward (FFT) or backward (IFT).
-  subroutine FFT()
+  ! Complex transform of field m of VVdz along z, in place: forward (FFT)
+  ! or backward (IFT).  One field per call so that the transposes of the
+  ! other fields can overlap (hst_transforms).
+  subroutine FFT(m)
+    integer(C_INT), intent(in) :: m
     integer :: istat
 #ifdef HAVE_FFTW
-    call fftw_execute_dft(pFFT, VVdz, VVdz)
+    call fftw_execute_dft(pFFT, VVdz(:, :, :, m), VVdz(:, :, :, m))
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdz)
-    istat = cufftExecZ2Z(cu_pFFT, VVdz, VVdz, CUFFT_FORWARD)
+    istat = cufftExecZ2Z(cu_pFFT, VVdz(:, :, :, m), VVdz(:, :, :, m), CUFFT_FORWARD)
     call check(istat, 'cufftExecZ2Z FFT')
     !$omp end target data
 #endif
   end subroutine FFT
 
-  subroutine IFT()
+  subroutine IFT(m)
+    integer(C_INT), intent(in) :: m
     integer :: istat
 #ifdef HAVE_FFTW
-    call fftw_execute_dft(pIFT, VVdz, VVdz)
+    call fftw_execute_dft(pIFT, VVdz(:, :, :, m), VVdz(:, :, :, m))
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdz)
-    istat = cufftExecZ2Z(cu_pIFT, VVdz, VVdz, CUFFT_INVERSE)
+    istat = cufftExecZ2Z(cu_pIFT, VVdz(:, :, :, m), VVdz(:, :, :, m), CUFFT_INVERSE)
     call check(istat, 'cufftExecZ2Z IFT')
     !$omp end target data
 #endif
   end subroutine IFT
 
-  ! Complex x modes of VVdx -> real x points rVVdx (RFT), and the real
-  ! products -> complex modes VVdp (HFT), both in place.
-  subroutine RFT()
+  ! Complex x modes of field m of VVdx -> real x points rVVdx (RFT), and
+  ! the real products -> complex modes VVdp (HFT), both in place.
+  subroutine RFT(m)
+    integer(C_INT), intent(in) :: m
     integer :: istat
 #ifdef HAVE_FFTW
-    call fftw_execute_dft_c2r(pRFT, VVdx, rVVdx)
+    call fftw_execute_dft_c2r(pRFT, VVdx(:, :, :, m), rVVdx(:, :, :, m))
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdx)
-    istat = cufftExecZ2D(cu_pRFT, VVdx, VVdx)
+    istat = cufftExecZ2D(cu_pRFT, VVdx(:, :, :, m), VVdx(:, :, :, m))
     call check(istat, 'cufftExecZ2D RFT')
     !$omp end target data
 #endif
   end subroutine RFT
 
-  subroutine HFT()
+  subroutine HFT(m)
+    integer(C_INT), intent(in) :: m
     integer :: istat
 #ifdef HAVE_FFTW
-    call fftw_execute_dft_r2c(pHFT, products, VVdp)
+    call fftw_execute_dft_r2c(pHFT, products(:, :, :, m), VVdp(:, :, :, m))
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(VVdp)
-    istat = cufftExecD2Z(cu_pHFT, VVdp, VVdp)
+    istat = cufftExecD2Z(cu_pHFT, VVdp(:, :, :, m), VVdp(:, :, :, m))
     call check(istat, 'cufftExecD2Z HFT')
     !$omp end target data
 #endif

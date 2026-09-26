@@ -72,7 +72,9 @@ a seeded, divergence-free random field is generated (`&init`).
 
 `timing = .true.` in `&time_control` prints the wall-clock time per phase
 of the substep at the end of the run (`src/hst_timer.f90`; the transposes
-appear as their pack/unpack kernels and the alltoall).  `line_chunk`
+are inside the transform and product phases, since the alltoall of one
+field overlaps the transforms of the next and only its exposed part costs
+time).  `line_chunk`
 in `&mesh` bounds the workspace of the line solver (x columns per batch;
 0 = all columns on the GPU, 16 on the CPU, see `src/hst_linsolve.f90`).
 `transport` in `&mesh` chooses how the alltoall moves the device buffers:
@@ -175,7 +177,7 @@ a two-node measurement first.
 ```
 src/hst_params.f90       all state: mesh, parameters, clock, rank layout, fields
 src/hst_input.f90        the namelist deck
-src/hst_mpi.f90          x-z pencil decomposition, alltoall transpose (MPI or NCCL), tiled transpose kernel, MPI-IO types
+src/hst_mpi.f90          x-z pencil decomposition, double-buffered alltoall transpose (MPI or NCCL), tiled transpose kernel, MPI-IO types
 src/hst_fft.f90          FFTW / cuFFT, the target stream (the only vendor-specific file besides hst_mpi)
 src/hst_timer.f90        per-phase timer
 src/hst_setup.f90        allocation and device mapping
