@@ -1721,3 +1721,39 @@ and the restart repeats one `Runtimedata` line (10002 lines for S t =
 0..100 at dt_stat = 0.01).  The CPL post-processing of the 15 snapshots
 from S t = 30 runs as `jobs/horeka_postprocess.slurm` on a `cpuonly`
 node (job 5181558, 4 ranks, about 50 GB each).
+
+## Post-processing in Fortran (2026-10-05, session 13; the user asked)
+
+`src/postpro/postpro.f90`, `make postpro`, driven by the namelist
+`postpro.in` (snapshots, deck, output directory, and switches: `mean`,
+`stresses`, `spectra`, `budgets` = the list of components).  It is the
+solver's modules with a loop over snapshots on top: `restart_read` reads
+a snapshot (its time with it), `fill_ghosts` the shear-periodic rows,
+`compute_pressure` the pressure (so `p_fields/` is not needed),
+`line_solve(KIND_DY)` the compact d/dy of the three components, and the
+nine gradient fields and the pressure go to physical space three at a
+time through `V` and `transform_to_physical` (the physical field is
+read off `rVVdx`, which the CFL already uses that way).  The plane
+statistics are sums over this rank's modes or physical points and rows,
+reduced over the ranks at the end, so any decomposition works.  The
+profile derivatives (the production's mean slope, the transports, the
+viscous diffusion) use the solver's own stencils: `D0 f' = D1 f` is a
+periodic pentadiagonal system of size ny, stored dense and
+LU-factorized once (second-order central differences, the first
+attempt, left the derivative terms 1-5% off the CPL ones).  Output: text
+files with a header, `mean.dat`, `stresses.dat`, `budget_<ij>.dat`,
+`spectra_xz.dat` (y-averaged, kz folded), `spectra_x.dat`, `spectra_z.dat`.
+
+Checks on the default deck's snapshot at t = 2 (64 x 128 x 64) against
+the CPL chain on the same file: the stresses, the production, the
+dissipation, the pressure-strain, both transports and the viscous
+diffusion of all six components agree to 5e-11 (CPL writes its binaries
+with that precision); the sums of `spectra_xz.dat` equal the y-averaged
+stresses; two x-z pencils x two y slabs on four CPU ranks and the GPU
+build give the same files to the printed eight digits; four snapshots
+with `budgets = 'uu uv'` average as they should.  The CPL names differ
+from ours (their v is our w): `jobs/cpl_postprocess.sh` keeps running the
+CPL chain as the cross-check, now with CPL's `postpro.in` inside its
+build directory so that it does not overwrite ours.  Not ported: the MKE
+budget (zero in a box without mean pressure gradient), the pressure
+decomposition, the pressure-strain spectra, the VTK output.

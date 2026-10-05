@@ -4,7 +4,8 @@
 # pressure reconstruction), which read our files unchanged.
 #   jobs/cpl_postprocess.sh <run dir> [nranks] [nfmin nfmax dn]
 # Writes scddns.in (the deck in CPL names: their ny = our nz, their nz = our
-# ny + 1) and postpro.in next to hst.in, builds postpro in <run dir>/cpl-postpro
+# ny + 1) next to hst.in and CPL's postpro.in in <run dir>/cpl-postpro (our own
+# postpro.in, the namelist of src/postpro, keeps its name), builds postpro there
 # from a copy of HST_MAIN (~/Codes/hst/hst-main; ~/hst-main on HoreKA) with
 # mpicpl (needs cpl and mpicc on PATH) and runs it with mpirun; the results go
 # to <run dir>/statistics/ (mean.dat, rms.dat, spectra.bin, uiuj.bin, mke.bin).
@@ -42,13 +43,14 @@ Sfield=
 END
 nf=$(ls "$run"/fields/field*.fld 2>/dev/null | wc -l)
 [ "$nf" -gt 0 ] || { echo "no fields/field*.fld in $run"; exit 1; }
-printf 'nfmin=%s\nnfmax=%s\ndn=%s\npath_name=./\n' "${3:-1}" "${4:-$nf}" "${5:-1}" > "$run/postpro.in"
-echo "$run: $nf fields, CPL deck nx=$nx ny=$nz nz=$((ny + 1)), $(tr '\n' ' ' < "$run/postpro.in")"
+b="$run/cpl-postpro"; mkdir -p "$b"
+printf 'nfmin=%s\nnfmax=%s\ndn=%s\npath_name=%s/\n' "${3:-1}" "${4:-$nf}" "${5:-1}" "$run" > "$b/postpro.in"
+echo "$run: $nf fields, CPL deck nx=$nx ny=$nz nz=$((ny + 1)), $(tr '\n' ' ' < "$b/postpro.in")"
 
 # build postpro from a copy of hst-main (the pressure flag off unless PRESSURE=cpl)
-b="$run/cpl-postpro"
 if [ ! -x "$b/postpro" ] || [ "${PRESSURE:-}" != "$(cat "$b/.pressure" 2>/dev/null)" ]; then
-  rm -rf "$b"; mkdir -p "$b"; cp -r "$HST_MAIN"/*.cpl "$HST_MAIN"/postprocess "$HST_MAIN"/pressure_reconstruction "$b"
+  rm -rf "$b"/*.cpl "$b"/postprocess "$b"/pressure_reconstruction "$b"/.cpl "$b"/postpro
+  cp -r "$HST_MAIN"/*.cpl "$HST_MAIN"/postprocess "$HST_MAIN"/pressure_reconstruction "$b"
   chmod -R u+w "$b"
   sed -i 's/, check_linsolve)/)/' "$b"/postprocess/convenience.cpl "$b"/pressure_reconstruction/poisson.cpl
   [ "${PRESSURE:-}" = cpl ] || sed -i 's/^#define pressure_fields/! #define pressure_fields/' "$b/flags.cpl"
@@ -59,5 +61,5 @@ if [ ! -x "$b/postpro" ] || [ "${PRESSURE:-}" != "$(cat "$b/.pressure" 2>/dev/nu
   [ -x "$b/postpro" ] || { echo "postpro did not build (see $b)"; exit 1; }
 fi
 mkdir -p "$run/statistics"
-( cd "$run" && mpirun -np "$np" "$b/postpro" )
+( cd "$b" && mpirun -np "$np" ./postpro )
 ls -la "$run/statistics"

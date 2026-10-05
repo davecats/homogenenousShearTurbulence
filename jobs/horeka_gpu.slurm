@@ -26,4 +26,5 @@ echo "job $SLURM_JOB_ID on $(hostname), $SLURM_NTASKS ranks, deck: $(pwd)/hst.in
 nvidia-smi -L
 
 HST_EXE=${HST_EXE:-$HST_ROOT/build-gpu/hst}     # e.g. sbatch --export=ALL,HST_EXE=~/hst/build-gpu/test_roundtrip
-mpirun -np $SLURM_NTASKS --bind-to none $HST_EXE hst.in
+HST_ARGS=${HST_ARGS:-hst.in}                    # the post-processing: HST_EXE=~/hst/build-gpu/postpro,HST_ARGS=postpro.in
+mpirun -np $SLURM_NTASKS --bind-to none $HST_EXE $HST_ARGS

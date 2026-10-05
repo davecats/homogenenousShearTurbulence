@@ -5,6 +5,7 @@
 #                                                            -> build-gpu/hst
 #   make GPU=1 NCCL=1   the same with NCCL for the alltoall (deck: transport)
 #   make test       also build the test programs (tests/*.f90, on tests/test_common.f90) into the build dir
+#   make postpro    the post-processing program (src/postpro/postpro.f90) into the build dir
 #   make clean
 #
 # Source `env/istm.sh` or `env/horeka.sh` first so the right compilers are on
@@ -74,6 +75,12 @@ all: $(EXE)
 test: $(TESTEXE)
 	@echo "built $(TESTEXE)"
 
+postpro: $(BUILD)/postpro
+	@echo "built $(BUILD)/postpro"
+
+$(BUILD)/postpro: $(OBJ) $(BUILD)/postpro.o
+	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/postpro.o $(LIBS)
+
 $(EXE): $(OBJ) $(BUILD)/hst.o
 	$(FC) $(FFLAGS) -o $@ $(OBJ) $(BUILD)/hst.o $(LIBS)
 
@@ -84,6 +91,9 @@ $(BUILD)/%.o: src/%.f90 | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
 
 $(BUILD)/%.o: tests/%.f90 | $(BUILD)
+	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
+
+$(BUILD)/%.o: src/postpro/%.f90 | $(BUILD)
 	$(FC) $(FFLAGS) $(MODFLAG) -I$(BUILD) -c $< -o $@
 
 $(BUILD):
@@ -112,10 +122,11 @@ $(BUILD)/hst_equations.o:  $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o $(BU
 $(BUILD)/hst_stats.o:      $(BUILD)/hst_params.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_derivatives.o $(BUILD)/hst_stokes.o
 $(BUILD)/hst_pressure.o:   $(BUILD)/hst_params.o $(BUILD)/hst_fft.o $(BUILD)/hst_transforms.o $(BUILD)/hst_linsolve.o $(BUILD)/hst_io.o $(BUILD)/hst_derivatives.o
 $(BUILD)/hst.o:            $(OBJ)
+$(BUILD)/postpro.o:        $(OBJ)
 $(TESTOBJ):                $(OBJ)
 $(patsubst tests/%.f90,$(BUILD)/%.o,$(TESTS)): $(OBJ) $(TESTOBJ)
 
 clean:
 	rm -rf build-cpu build-gpu
 
-.PHONY: all test clean
+.PHONY: all test postpro clean
