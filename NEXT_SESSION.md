@@ -31,6 +31,14 @@ Copy the block at the end as the opening message of the next session.
   `~/hst-exp4`, `~/hst-exp5`) can go (`~/hst-y` holds the job outputs
   `hst-2node-517016*.out` that FINDINGS.md "Scaling" cites; copy them to
   `~/hst` first).
+- **The post-processing is now Fortran** (`src/postpro/postpro.f90`, `make
+  postpro`, `postpro.in`; FINDINGS.md "Post-processing in Fortran"):
+  means, stresses, spectra and the six Reynolds-stress budgets per plane,
+  text output, checked against the CPL chain to 5e-11 on one snapshot.
+  Job 5183609 (`accelerated`, one A100 node, 40 min) runs it on the
+  production run's snapshots 6..20 into `<run dir>/statistics_f90/`
+  (`hst-<jobid>.out` in the run directory); the `dev_accelerated` queue
+  was full of the user's jobs.
 - **Pending at the end of the session:** job 5181558
   (`jobs/horeka_postprocess.slurm`, `cpuonly`, 4 ranks, `--mem=230gb`,
   6 h) runs the CPL chain on snapshots 6..20 of the production run
@@ -40,7 +48,11 @@ Copy the block at the end as the opening message of the next session.
 
 ## The task
 
-1. **Read the post-processing** (job 5181558): if it ran, `rms.dat`
+1. **Read the post-processing**: job 5183609 (Fortran, `statistics_f90/`:
+   `stresses.dat` plane averages must give q2 about 0.083 and -uv/q2
+   about 0.136, the box budgets printed at the end of its log should
+   balance to a few per cent over 15 snapshots) and, as the cross-check,
+   the CPL job 5181558: if it ran, `rms.dat`
    (plane averages must give q2 about 0.083 and, in its `uw` column =
    our u v, -uv/q2 about 0.136 over the 15 snapshots), `mean.dat`,
    `spectra.bin`, `uiuj.bin`, `mke.bin` (the budget: production,
