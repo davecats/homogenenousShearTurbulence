@@ -14,7 +14,9 @@ BUILD=1
 
 set -euo pipefail
 
-POSTPROCESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Directory of this script with symlinks resolved, so it can be run from any
+# folder (e.g. ./path/to/run_postprocess.sh [DATA_DIR], or through a symlink).
+POSTPROCESS_DIR="$(cd -- "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")" && pwd)"
 DATA_DIR="$(realpath -- "${1:-$DATA_DIR}")"
 POSTPROCESS_EXE="$POSTPROCESS_DIR/postprocess"
 

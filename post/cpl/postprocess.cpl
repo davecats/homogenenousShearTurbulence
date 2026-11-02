@@ -36,6 +36,9 @@ USE src/mod_rey_decomp
 #ifdef compute_budget
     USE src/mod_compute_budget
 #endif
+#ifdef compute_spectra
+    USE src/mod_compute_spectra
+#endif
 #ifdef convert_to_vtk
     USE src/mod_fld2vtk
 #endif
@@ -108,6 +111,10 @@ LOOP FOR nf = nstart TO nend
         ! Accumulate mean velocities and velocity variances
         accum_variances()
     #endif
+    #ifdef compute_spectra
+        ! Accumulate velocity spectra
+        accum_spectra()
+    #endif
     #ifdef compute_budget
         ! Compute derivatives
         velocity_gradient(Vder)
@@ -125,6 +132,9 @@ REPEAT LOOP
 #ifdef compute_budget
     mpi_comm_budget()
     write_budget()
+#endif
+#ifdef compute_spectra
+    write_spectra()
 #endif
 
 MPI_Finalize()

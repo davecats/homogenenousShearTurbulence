@@ -16,6 +16,9 @@ IF rank=0 THEN
     #ifdef compute_budget
         WRITE "budgets"
     #endif
+    #ifdef compute_spectra
+        WRITE "velocity spectra"
+    #endif
     WRITE "---------------------------------------------------------------------------------------"
     WRITE ""
 END IF

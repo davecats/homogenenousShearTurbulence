@@ -182,6 +182,11 @@ it differs from the time average of our lines by that variance.  With
 (ours agree with them to 1e-4 outside the (0,0) mode, whose constant
 differs).
 
+The post-processor in `post/cpl/` (means, Reynolds stresses, budgets, velocity
+spectra, VTK; in the axis convention of `hst`) is documented in
+[post/cpl/README.md](post/cpl/README.md), including the layout of the binary
+spectra files.
+
 ## Tests
 
 ```bash
