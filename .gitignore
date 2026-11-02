@@ -87,3 +87,4 @@ run-taylor_green/
 test_*/
 *.pdf
 *.dat
+plot_runtimedata.ipynb
