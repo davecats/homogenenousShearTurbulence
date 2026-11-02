@@ -7,15 +7,15 @@ REALVARIANCE = STRUCTURE(REAL uu,uv,uw,vv,vw,ww)
 ! ------------------------------------
 REALVELOCITY mean_vel
 REALVARIANCE var_vel , var_vel_tmp
-REALVARIANCE var_vel_prof_tmp(-1..nz+1)
+REALVARIANCE var_vel_prof_tmp(-2..ny+1)
 REALVARIANCE var_vel_phase(1..dn), var_vel_phase_chunk(1..dn)=0
 
 SUBROUTINE accum_variances()
-    ! Reset per-z profile accumulator before each field
+    ! Reset per-y profile accumulator before each field
     var_vel_prof_tmp = 0
     ! Parseval theorem method for var and pstrain
-    LOOP FOR iz=1 TO nz-1 WITH var_vel_prof_tmp(iz):
-        LOOP FOR ALL ix,iy WITH V(ix,iy,iz):
+    LOOP FOR iy=0 TO ny-1 WITH var_vel_prof_tmp(iy):
+        LOOP FOR ALL ix,iz WITH V(ix,iz,iy):
             c = IF ix=0 THEN 1 ELSE 2
             ! re-stresses
             uu = ~+ c*(u|u).REAL; vv = ~+ c*(v|v).REAL; ww = ~+ c*(w|w).REAL
@@ -23,18 +23,18 @@ SUBROUTINE accum_variances()
         REPEAT
     REPEAT
     ! Periodic b.c. for variances (stat. homogeneity)
-    var_vel_prof_tmp(0   ) = var_vel_prof_tmp(nz-1)
-    var_vel_prof_tmp(-1  ) = var_vel_prof_tmp(nz-2)
-    var_vel_prof_tmp(nz  ) = var_vel_prof_tmp(1)
-    var_vel_prof_tmp(nz+1) = var_vel_prof_tmp(2)
-    ! Avg. in z (stats. computed as instantaneous vol. avg.)
+    var_vel_prof_tmp(ny  ) = var_vel_prof_tmp(0)
+    var_vel_prof_tmp(ny+1) = var_vel_prof_tmp(1)
+    var_vel_prof_tmp(-1  ) = var_vel_prof_tmp(ny-1)
+    var_vel_prof_tmp(-2  ) = var_vel_prof_tmp(ny-2)
+    ! Avg. in y (stats. computed as instantaneous vol. avg.)
     WITH mean_vel_tmp, var_vel_tmp:
-        uu = zintegr( var_vel_prof_tmp(*).uu)/Lz_ext
-        vv = zintegr( var_vel_prof_tmp(*).vv)/Lz_ext
-        ww = zintegr( var_vel_prof_tmp(*).ww)/Lz_ext
-        uv = zintegr( var_vel_prof_tmp(*).uv)/Lz_ext
-        uw = zintegr( var_vel_prof_tmp(*).uw)/Lz_ext
-        vw = zintegr( var_vel_prof_tmp(*).vw)/Lz_ext
+        uu = yintegr( var_vel_prof_tmp(*).uu)/Ly_ext
+        vv = yintegr( var_vel_prof_tmp(*).vv)/Ly_ext
+        ww = yintegr( var_vel_prof_tmp(*).ww)/Ly_ext
+        uv = yintegr( var_vel_prof_tmp(*).uv)/Ly_ext
+        uw = yintegr( var_vel_prof_tmp(*).uw)/Ly_ext
+        vw = yintegr( var_vel_prof_tmp(*).vw)/Ly_ext
     END WITH
     ! Store velocity variances at correct phase
     WITH mean_vel_tmp, var_vel_tmp:

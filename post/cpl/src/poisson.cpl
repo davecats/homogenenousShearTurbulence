@@ -1,69 +1,76 @@
-! 
-! This module solves the poisson Equation and computes the fluctuating pressure field 
-! in a homogeneous shear turbulence (HST) flow computed with scddns.cpl. 
-! 
+!
+! This module solves the poisson Equation and computes the fluctuating pressure field
+! in a homogeneous shear turbulence (HST) flow computed with scddns.cpl.
+!
 
 SUBROUTINE compute_pressure(POINTER TO ARRAY(*,*,*) OF DERIVS gradV) FOLLOWS
 
 MODULE poisson
 
-! 
+!
 ! Writes the fluctuating pressure into the global array `pressure`
 ! (declared in convenience_postprocess.cpl).  `gradV` is the velocity
 ! gradient field (a single pointer argument, as in velocity_gradient).
-! 
+!
+! Mean flow U = S*y, W = S2*y (x streamwise, y vertical, z spanwise): the
+! mean shear enters the right-hand side through the terms with S and S2.
+!
 
 SUBROUTINE compute_pressure(POINTER TO ARRAY(*,*,*) OF DERIVS gradV)
   pressure=0
-  ! Build Right Hand Side 
+  ! Build Right Hand Side
   ! -----------------------------------------------
   ! Definitions
-  ARRAY(0..nx,-ny..ny,-1..nz+1) OF COMPLEX hp=0
-  ARRAY(0..nxd-1,0..nyd-1) OF DERIVS gradVd=0
-  ARRAY(0..nxd-1,0..nyd-1) OF COMPLEX hpd=0
+  ARRAY(0..nx,-nz..nz,-2..ny+1) OF COMPLEX hp=0
+  ARRAY(0..nxd-1,0..nzd-1) OF DERIVS gradVd=0
+  ARRAY(0..nxd-1,0..nzd-1) OF COMPLEX hpd=0
   ! Computing nonlinear terms
-  LOOP FOR iz=1 TO nz-1
+  LOOP FOR iy=0 TO ny-1
     LOOP FOR ix=0 TO nx
-      DO gradVd(ix,iy)=gradV(ix,iy,iz) FOR iy=0 TO ny
-      DO gradVd(ix,iy)=0 FOR iy=ny+1 TO nyd-ny-1
-      DO gradVd(ix,nyd+iy)=gradV(ix,iy,iz) FOR iy=-ny TO -1
+      DO gradVd(ix,iz)=gradV(ix,iz,iy) FOR iz=0 TO nz
+      DO gradVd(ix,iz)=0 FOR iz=nz+1 TO nzd-nz-1
+      DO gradVd(ix,nzd+iz)=gradV(ix,iz,iy) FOR iz=-nz TO -1
       WITH gradVd(ix,*): INLINE LOOP FOR iu IN (ux,uy,uz,vx,vy,vz,wx,wy,wz); IFTU(iu); REPEAT
     REPEAT LOOP
     DO gradVd(ix,*)=0 FOR ix=nx+1 TO nxd-1
     DO
-      WITH gradVd(*,iy): INLINE LOOP FOR iu IN (ux,uy,uz,vx,vy,vz,wx,wy,wz); RFTU(iu); REPEAT
-      DO WITH gradVd(ix,iy):
+      WITH gradVd(*,iz): INLINE LOOP FOR iu IN (ux,uy,uz,vx,vy,vz,wx,wy,wz); RFTU(iu); REPEAT
+      DO WITH gradVd(ix,iz):
+        ! (the order of the three diagonal products is that of the legacy code, which
+        !  makes the results reproduce it bit for bit, including the arbitrary
+        !  constant of the singular (0,0) mode of the pressure)
         #ifndef StokesLayer
-          hpd(ix,iy).REAL=2*[ux.REAL*vy.REAL+vy.REAL*wz.REAL+ux.REAL*wz.REAL-vx.REAL*uy.REAL-wx.REAL*(S+uz.REAL)-wy.REAL*(S2+vz.REAL)]
-          hpd(ix,iy).IMAG=2*[ux.IMAG*vy.IMAG+vy.IMAG*wz.IMAG+ux.IMAG*wz.IMAG-vx.IMAG*uy.IMAG-wx.IMAG*(S+uz.IMAG)-wy.IMAG*(S2+vz.IMAG)]
+          hpd(ix,iz).REAL=2*[ux.REAL*wz.REAL+wz.REAL*vy.REAL+ux.REAL*vy.REAL-wx.REAL*uz.REAL-vx.REAL*(S+uy.REAL)-vz.REAL*(S2+wy.REAL)]
+          hpd(ix,iz).IMAG=2*[ux.IMAG*wz.IMAG+wz.IMAG*vy.IMAG+ux.IMAG*vy.IMAG-wx.IMAG*uz.IMAG-vx.IMAG*(S+uy.IMAG)-vz.IMAG*(S2+wy.IMAG)]
         #else
-          hpd(ix,iy).REAL=2*[ux.REAL*vy.REAL+vy.REAL*wz.REAL+ux.REAL*wz.REAL-vx.REAL*uy.REAL-wx.REAL*(S+uz.REAL)-wy.REAL*vz.REAL]
-          hpd(ix,iy).IMAG=2*[ux.IMAG*vy.IMAG+vy.IMAG*wz.IMAG+ux.IMAG*wz.IMAG-vx.IMAG*uy.IMAG-wx.IMAG*(S+uz.IMAG)-wy.IMAG*vz.IMAG]
+          hpd(ix,iz).REAL=2*[ux.REAL*wz.REAL+wz.REAL*vy.REAL+ux.REAL*vy.REAL-wx.REAL*uz.REAL-vx.REAL*(S+uy.REAL)-vz.REAL*wy.REAL]
+          hpd(ix,iz).IMAG=2*[ux.IMAG*wz.IMAG+wz.IMAG*vy.IMAG+ux.IMAG*vy.IMAG-wx.IMAG*uz.IMAG-vx.IMAG*(S+uy.IMAG)-vz.IMAG*wy.IMAG]
         #endif
       FOR ALL ix
-      HFTU(hpd(*,iy)) 
-    FOR iy=0 TO nyd-1
-    DO 
+      HFTU(hpd(*,iz))
+    FOR iz=0 TO nzd-1
+    DO
       FFTU(hpd(ix,*))
-      DO hp(ix,iy,iz)=hpd(ix,iy) FOR iy=0 TO ny
-      DO hp(ix,iy,iz)=hpd(ix,nyd+iy) FOR iy=-ny TO -1
+      DO hp(ix,iz,iy)=hpd(ix,iz) FOR iz=0 TO nz
+      DO hp(ix,iz,iy)=hpd(ix,nzd+iz) FOR iz=-nz TO -1
     FOR ix=0 TO nx
   REPEAT
-  DO pbc(hp(ix,iy,*)) FOR ALL ix,iy
-  ! Solving the periodic problem for coefficient (alfa,beta) 
+  DO pbc(hp(ix,iz,*)) FOR ALL ix,iz
+  ! Solving the periodic problem for coefficient (alfa,beta)
   ! -----------------------------------------------
-  ARRAY(1..nz-1,1..5) OF COMPLEX pmat=0
+  ! (SMW system rows numbered 1..ny: row iy+1 is the equation of mesh row iy)
+  ARRAY(1..ny,1..5) OF COMPLEX pmat=0
   ! Build linear system
   LOOP FOR ix=0 TO nx
         alpha=alpha0*ix
-        LOOP FOR iy=-ny TO ny
-          beta=beta0*iy; k2=alpha**2+beta**2
+        LOOP FOR iz=-nz TO nz
+          beta=beta0*iz; k2=alpha**2+beta**2
           pmat=0
-          LOOP FOR iz=1 TO nz-1 AND i=-2 TO 2 WITH derivatives(iz):
-            pmat(iz,i+3) =   [d2(i)-k2*d0(i)]      * spbc_shift(ix, iy, [(iz+i-1) MOD (nz-1)]+1, iz+i)
-            pressure(ix,iy,iz)  = ~+ d0(i)*hp(ix,iy,iz+i) * spbc_shift(ix, iy, [(iz+i-1) MOD (nz-1)]+1, iz+i)
+          LOOP FOR iy=0 TO ny-1 AND i=-2 TO 2 WITH derivatives(iy):
+            pmat(iy+1,i+3) =   [d2(i)-k2*d0(i)]      * spbc_shift(ix, iz, (iy+i) MOD ny, iy+i)
+            pressure(ix,iz,iy)  = ~+ d0(i)*hp(ix,iz,iy+i) * spbc_shift(ix, iz, (iy+i) MOD ny, iy+i)
           REPEAT
-          penta_smw_solve(nz-1, pmat, pressure(ix,iy,1..nz-1), pressure(ix,iy,1..nz-1))
+          solve_rows(pmat, pressure(ix,iz,*))
         REPEAT
   REPEAT
 END compute_pressure

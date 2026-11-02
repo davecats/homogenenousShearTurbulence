@@ -11,16 +11,15 @@ the `&group` / `/` Fortran namelist delimiters, so it cannot read hst.in
 verbatim.  This script is the compatibility boundary: it pulls every value the
 post-processor needs out of hst.in and emits them as flat tokens.
 
-Axis relabel: hst.in &mesh uses the NEW-code convention
-  ny = physical shear points, nz = spanwise Fourier modes,
-while the CPL post-processor uses
-  nx = same,
-  ny_cpl = spanwise modes (= nz_new),   nz_cpl = ny_new + 1.
+Axis convention: the post-processor uses the convention of the simulator,
+  x streamwise, y vertical (the shear direction), z spanwise,
+so nx, ny, nz (modes in x, points in y, modes in z) and ly are copied from
+hst.in &mesh without any relabelling.
 readinput.cpl declares nx/ny/nz as plain INTEGERs (no CONSTANT), so CPL builds
 its field arrays with RUNTIME extents taken from these readinput.in tokens
 (CPL's compiler automatically heap-allocates arrays whose bounds are not
-compile-time constants).  This script therefore emits nx/ny/nz (already in the
-CPL convention) FIRST, so readinput.cpl reads them before touching any array.
+compile-time constants).  This script therefore emits nx/ny/nz FIRST, so
+readinput.cpl reads them before touching any array.
 
 Usage:
     python3 convert_hstin.py [hst.in] [readinput.in]
@@ -40,8 +39,7 @@ BOOL = {'.true.': 'YES', '.false.': 'NO', 'true': 'YES', 'false': 'NO',
 TOKENS = [
     ('alfa0',            'alfa0',          'mesh'),
     ('beta0',            'beta0',          'mesh'),
-    # Fortran's y/shear direction is CPL's z direction.
-    ('lz',               'ly',             'mesh'),
+    ('ly',               'ly',             'mesh'),
     ('ystretch',         'ystretch',       'mesh'),
     ('re',               're',             'physics'),
     ('S',                'S',              'physics'),
@@ -94,16 +92,12 @@ def main():
     vals = parse_deck(src)
 
     out = []
-    # Array extents come from &mesh and are emitted FIRST, in the CPL convention
-    # (ny_cpl = spanwise modes = deck nz; nz_cpl = physical points + 1 = deck ny+1).
-    # readinput.cpl reads these into its plain INTEGER nx/ny/nz before any array
-    # is built, so CPL sizes the field arrays at runtime.
-    deck_nx = int(vals['nx'])
-    deck_ny = int(vals['ny'])      # physical shear points (new-code)
-    deck_nz = int(vals['nz'])      # spanwise Fourier modes  (new-code)
-    out.append(f'nx = {deck_nx}')
-    out.append(f'ny = {deck_nz}')          # spanwise modes
-    out.append(f'nz = {deck_ny + 1}')      # physical points + 1
+    # Array extents come from &mesh and are emitted FIRST, verbatim: modes in x,
+    # points in y (shear direction), modes in z (spanwise).  readinput.cpl reads
+    # these into its plain INTEGER nx/ny/nz before any array is built, so CPL
+    # sizes the field arrays at runtime.
+    for key in ('nx', 'ny', 'nz'):
+        out.append(f'{key} = {int(vals[key])}')
 
     for name, key, grp in TOKENS:
         if key not in vals:

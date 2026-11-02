@@ -1,5 +1,5 @@
 STRING vtk_name
-ARRAY(0..nxd-1,0..nyd-1,-1..nz+1) OF VELOCITY Vdd=0
+ARRAY(0..nxd-1,0..nzd-1,-2..ny+1) OF VELOCITY Vdd=0
 SINGLE tmpu, tmpv, tmpw, tmp
 FILE outfile
 
@@ -21,42 +21,43 @@ END ByteSwap
 
 SUBROUTINE fld2vtk()
     Vdd=0
-    LOOP FOR iz=-1 TO nz+1
-        !V(0,0,iz)=0 !Solo fluttuazioni rispetto alla media spaziale
+    LOOP FOR iy=-2 TO ny+1
+        !V(0,0,iy)=0 !Solo fluttuazioni rispetto alla media spaziale
         LOOP FOR ix=0 TO nx
-        Vdd(ix,0..ny,iz)=V(ix,0..ny,iz)
-        Vdd(ix,nyd+(-ny..-1),iz)=V(ix,-ny..-1,iz)
-        WITH Vdd(ix,*,iz): IFT(u); IFT(v); IFT(w) 
+        Vdd(ix,0..nz,iy)=V(ix,0..nz,iy)
+        Vdd(ix,nzd+(-nz..-1),iy)=V(ix,-nz..-1,iy)
+        WITH Vdd(ix,*,iy): IFT(u); IFT(v); IFT(w)
         REPEAT
-        DO WITH Vdd(*,iy,iz): RFT(u); RFT(v); RFT(w) FOR ALL iy
+        DO WITH Vdd(*,iz,iy): RFT(u); RFT(v); RFT(w) FOR ALL iz
     REPEAT
-    
+
+    ! VTK axes: x streamwise, y vertical, z spanwise (x varies fastest in the data)
     outfile=CREATE(vtk_name)
     WRITE TO outfile "# vtk DataFile Version 2.0"
     WRITE TO outfile "DNS vector + lambda2 + vorticity"
     WRITE TO outfile "BINARY"
     WRITE TO outfile "DATASET RECTILINEAR_GRID"
-    WRITE TO outfile "DIMENSIONS "2*nxd" "nyd" "nz-1
+    WRITE TO outfile "DIMENSIONS "2*nxd" "ny" "nzd
     WRITE TO outfile "X_COORDINATES "2*nxd" float"
     LOOP FOR ix=0 TO 2*nxd-1
         tmp=SINGLE(2*PI/alpha0*ix/(2*nxd))
         ByteSwap(^tmp); WRITE BINARY TO outfile tmp
     REPEAT
-    WRITE TO outfile "Y_COORDINATES "nyd" float"
-        LOOP FOR iy=0 TO nyd-1
-        tmp=SINGLE(2*PI/beta0*iy/nyd)
+    WRITE TO outfile "Y_COORDINATES "ny" float"
+        LOOP FOR iy=0 TO ny-1
+        tmp=SINGLE(y(iy) - 1)
         ByteSwap(^tmp); WRITE BINARY TO outfile tmp
     REPEAT
-    WRITE TO outfile "Z_COORDINATES "nz-1" float"
-        LOOP FOR iz=1 TO nz-1 
-        tmp=SINGLE(z(iz) - 1)
+    WRITE TO outfile "Z_COORDINATES "nzd" float"
+        LOOP FOR iz=0 TO nzd-1
+        tmp=SINGLE(2*PI/beta0*iz/nzd)
         ByteSwap(^tmp); WRITE BINARY TO outfile tmp
     REPEAT
-    WRITE TO outfile "POINT_DATA " 2*nxd*nyd*(nz-1)
+    WRITE TO outfile "POINT_DATA " 2*nxd*ny*nzd
 
     WRITE TO outfile "VECTORS velocity float"
-    LOOP FOR iz=1 TO nz-1 AND iy=0 TO nyd-1 AND ix=0 TO 2*nxd-1
-        tmpu=SINGLE(Vdd(*,iy,iz).u.REALIFIED(ix)); tmpv=SINGLE(Vdd(*,iy,iz).v.REALIFIED(ix)); tmpw=SINGLE(Vdd(*,iy,iz).w.REALIFIED(ix))
+    LOOP FOR iz=0 TO nzd-1 AND iy=0 TO ny-1 AND ix=0 TO 2*nxd-1
+        tmpu=SINGLE(Vdd(*,iz,iy).u.REALIFIED(ix)); tmpv=SINGLE(Vdd(*,iz,iy).v.REALIFIED(ix)); tmpw=SINGLE(Vdd(*,iz,iy).w.REALIFIED(ix))
         ByteSwap(^tmpu); ByteSwap(^tmpv);ByteSwap(^tmpw); WRITE BINARY TO outfile tmpu,tmpv,tmpw ! VERSIONE CORRETTA!!!!
     REPEAT
     CLOSE outfile

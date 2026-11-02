@@ -1,80 +1,96 @@
-! Define wall-normal mesh
+! Define vertical (shear-direction) mesh
+! Rows iy=0..ny-1 are the unique points (y(iy) = iy*ly/ny for a uniform grid);
+! rows -2,-1 and ny,ny+1 are the shear-periodic ghost rows.
 ! For htcoeff>0 non-uniform grid: higher density at half box
-REAL CONSTANT zmin=0
-REAL zmax=lz
-REAL CONSTANT Lz=zmax-zmin
-REAL z(-1..nz+1)
-REAL z0
+REAL CONSTANT ymin=0
+REAL ymax=ly
+REAL CONSTANT Ly=ymax-ymin
+REAL y(-2..ny+1)
+REAL y0
 LOOP FOR ALL i
-  z0=(i-1)/(nz-1)
+  y0=i/ny
   IF htcoeff<eps_num THEN
-    z(i)=z0
+    y(i)=y0
   ELSE
-    IF z0<=0.5 THEN
-      z(i)=0.5*(1-1+TANH(2*htcoeff*(z0-0))/TANH(htcoeff))
+    IF y0<=0.5 THEN
+      y(i)=0.5*(1-1+TANH(2*htcoeff*(y0-0))/TANH(htcoeff))
     ELSE
-      z(i)=0.5*(1+1+TANH(2*htcoeff*(z0-1))/TANH(htcoeff))
+      y(i)=0.5*(1+1+TANH(2*htcoeff*(y0-1))/TANH(htcoeff))
     END IF
   END IF
 REPEAT
-z=~*Lz
+y=~*Ly
 
-STRUCTURE[ARRAY(-2..2) OF COMPLEX d0,d1,d2,d4] derivatives(1..nz-1)=0
+STRUCTURE[ARRAY(-2..2) OF COMPLEX d0,d1,d2,d4] derivatives(0..ny-1)=0
 ! Compact fd without shift
 SUBROUTINE setup_derivatives()
   COMPLEX M(0..4,0..4),t(0..4)
-  LOOP FOR iz=1 TO nz-1 WITH derivatives(iz):
-    !d4 
-    DO M(i,j)=(z(iz-2+j)-z(iz))**(4-i) FOR ALL i,j; LUdecomp M
+  LOOP FOR iy=0 TO ny-1 WITH derivatives(iy):
+    !d4
+    DO M(i,j)=(y(iy-2+j)-y(iy))**(4-i) FOR ALL i,j; LUdecomp M
     t=0; t(0)=24
     d4(-2+(*))=M\t
     !d0
-    DO M(i,j)=(5-i)*(6-i)*(7-i)*(8-i)*(z(iz-2+j)-z(iz))**(4-i) FOR ALL i,j; LUdecomp M
-    DO t(i)=SUM {d4(j)*(z(iz+j)-z(iz))**(8-i)} FOR j=-2 TO 2 AND FOR i=0 TO 4
+    DO M(i,j)=(5-i)*(6-i)*(7-i)*(8-i)*(y(iy-2+j)-y(iy))**(4-i) FOR ALL i,j; LUdecomp M
+    DO t(i)=SUM {d4(j)*(y(iy+j)-y(iy))**(8-i)} FOR j=-2 TO 2 AND FOR i=0 TO 4
     d0(-2+(*))=M\t
     !d2
-    DO M(i,j)=(z(iz-2+j)-z(iz))**(4-i) FOR ALL i,j; LUdecomp M
-    t=0; DO t(i)=SUM d0(j)*(4-i)*(3-i)*(z(iz+j)-z(iz))**(2-i) FOR j=-2 TO 2 AND FOR i=0 TO 2
-    d2(-2+(*))=M\t    
+    DO M(i,j)=(y(iy-2+j)-y(iy))**(4-i) FOR ALL i,j; LUdecomp M
+    t=0; DO t(i)=SUM d0(j)*(4-i)*(3-i)*(y(iy+j)-y(iy))**(2-i) FOR j=-2 TO 2 AND FOR i=0 TO 2
+    d2(-2+(*))=M\t
     !d1
-    t=0; DO t(i)=SUM d0(j)*(4-i)*(z(iz+j)-z(iz))**(3-i) FOR j=-2 TO 2 AND FOR i=0 TO 3
+    t=0; DO t(i)=SUM d0(j)*(4-i)*(y(iy+j)-y(iy))**(3-i) FOR j=-2 TO 2 AND FOR i=0 TO 3
     d1(-2+(*))=M\t
   REPEAT
 END setup_derivatives
 
 SUBROUTINE pbc(POINTER TO ARRAY(*) OF COMPLEX arr)
-  arr(nz)=arr(1);   arr(nz+1)=arr(2)
-  arr(0)=arr(nz-1); arr(-1)=arr(nz-2)
+  arr(ny)=arr(0);   arr(ny+1)=arr(1)
+  arr(-1)=arr(ny-1); arr(-2)=arr(ny-2)
 END pbc
 
-REAL gamma_x=0,delta_gamma_x=0,gamma_y=0,delta_gamma_y=0
-ARRAY(1..nz-1,1..5) OF COMPLEX D0mat=0,D0mat_0
+! gamma_x, gamma_z: streamwise and spanwise displacement of the upper periodic
+! image (the velocity files label gamma_z "gamma_y", see hstfieldio.cpl)
+REAL gamma_x=0,delta_gamma_x=0,gamma_z=0,delta_gamma_z=0
+! The linear systems of the SMW solver number their rows 1..ny: row iy+1 holds
+! the equation of the mesh row iy.
+ARRAY(1..ny,1..5) OF COMPLEX D0mat=0,D0mat_0
 setup_derivatives()
-DO D0mat(i,k+3)=derivatives(i).d0(k) FOR i=1 TO nz-1 AND k=-2 TO 2
+DO D0mat(iy+1,k+3)=derivatives(iy).d0(k) FOR iy=0 TO ny-1 AND k=-2 TO 2
 D0mat_0=D0mat
 
-INLINE COMPLEX FUNCTION spbc_shift(INTEGER ix,iy,i1,i2) = EXP[ I*(ix*alpha0*      gamma_x+iy*beta0*      gamma_y)*[z(i1)-z(i2)]]
-INLINE COMPLEX FUNCTION spbc_map(INTEGER ix,iy,i)       = EXP[-I*(ix*alpha0*delta_gamma_x+iy*beta0*delta_gamma_y)* z(i)        ]
+! Solves the SMW system a for the right-hand side f(0..ny-1), in place.  The
+! rows are copied through a scratch array numbered 1..ny like the solver's
+! arguments, since CPL cannot pass an offset slice of a complex array to it.
+ARRAY(1..ny) OF COMPLEX solve_rows_buf
+SUBROUTINE solve_rows(ARRAY(1..ny,1..5) OF COMPLEX a; POINTER TO ARRAY(*) OF COMPLEX f)
+    DO solve_rows_buf(iy+1)=f(iy) FOR iy=0 TO ny-1
+    penta_smw_solve(ny, a, solve_rows_buf, solve_rows_buf)
+    DO f(iy)=solve_rows_buf(iy+1) FOR iy=0 TO ny-1
+END solve_rows
 
-INLINE COMPLEX FUNCTION D0(COMPLEX f(*)) = {SUM [d0(k) * spbc_shift[ix, iy, ((iz+k-1) MOD (nz-1))+1, iz+k] * f(k)] FOR k=-2 TO 2}
-INLINE COMPLEX FUNCTION D1(COMPLEX f(*)) = {SUM [d1(k) * spbc_shift[ix, iy, ((iz+k-1) MOD (nz-1))+1, iz+k] * f(k)] FOR k=-2 TO 2}
-INLINE COMPLEX FUNCTION D2(COMPLEX f(*)) = {SUM [d2(k) * spbc_shift[ix, iy, ((iz+k-1) MOD (nz-1))+1, iz+k] * f(k)] FOR k=-2 TO 2}
-INLINE COMPLEX FUNCTION D4(COMPLEX f(*)) = {SUM [d4(k) * spbc_shift[ix, iy, ((iz+k-1) MOD (nz-1))+1, iz+k] * f(k)] FOR k=-2 TO 2}
+INLINE COMPLEX FUNCTION spbc_shift(INTEGER ix,iz,i1,i2) = EXP[ I*(ix*alpha0*      gamma_x+iz*beta0*      gamma_z)*[y(i1)-y(i2)]]
+INLINE COMPLEX FUNCTION spbc_map(INTEGER ix,iz,i)       = EXP[-I*(ix*alpha0*delta_gamma_x+iz*beta0*delta_gamma_z)* y(i)        ]
 
-SUBROUTINE deriv(ARRAY(*) OF COMPLEX f0,f1^; INTEGER ix,iy)
-    LOOP FOR iz=1 TO nz-1 WITH derivatives(iz)
-        f1(iz)={SUM [d1(k) * spbc_shift[ix, iy, ((iz+k-1) MOD (nz-1))+1, iz+k] * f0(([(iz+k-1) MOD (nz-1)]+1))] FOR k=-2 TO 2}
+INLINE COMPLEX FUNCTION D0(COMPLEX f(*)) = {SUM [d0(k) * spbc_shift[ix, iz, (iy+k) MOD ny, iy+k] * f(k)] FOR k=-2 TO 2}
+INLINE COMPLEX FUNCTION D1(COMPLEX f(*)) = {SUM [d1(k) * spbc_shift[ix, iz, (iy+k) MOD ny, iy+k] * f(k)] FOR k=-2 TO 2}
+INLINE COMPLEX FUNCTION D2(COMPLEX f(*)) = {SUM [d2(k) * spbc_shift[ix, iz, (iy+k) MOD ny, iy+k] * f(k)] FOR k=-2 TO 2}
+INLINE COMPLEX FUNCTION D4(COMPLEX f(*)) = {SUM [d4(k) * spbc_shift[ix, iz, (iy+k) MOD ny, iy+k] * f(k)] FOR k=-2 TO 2}
+
+SUBROUTINE deriv(ARRAY(*) OF COMPLEX f0,f1^; INTEGER ix,iz)
+    LOOP FOR iy=0 TO ny-1 WITH derivatives(iy)
+        f1(iy)={SUM [d1(k) * spbc_shift[ix, iz, (iy+k) MOD ny, iy+k] * f0(((iy+k) MOD ny))] FOR k=-2 TO 2}
     REPEAT
-    penta_smw_solve(nz-1, D0mat, f1(1..nz-1), f1(1..nz-1))
+    solve_rows(D0mat, f1)
 END deriv
 
-REAL FUNCTION zintegr(REAL f(*))
+REAL FUNCTION yintegr(REAL f(*))
   RESULT=0
-  LOOP FOR iz=1 TO nz-1 BY 2 
-    zp1=z(iz+1)-z(iz); zm1=z(iz-1)-z(iz) 
-    a1=-1/3*zm1+1/6*zp1+1/6*zp1*zp1/zm1
-    a3=+1/3*zp1-1/6*zm1-1/6*zm1*zm1/zp1
-    a2=zp1-zm1-a1-a3
-    RESULT=~+a1*f(iz-1) + a2*f(iz) + a3*f(iz+1)    
+  LOOP FOR iy=0 TO ny-1 BY 2
+    yp1=y(iy+1)-y(iy); ym1=y(iy-1)-y(iy)
+    a1=-1/3*ym1+1/6*yp1+1/6*yp1*yp1/ym1
+    a3=+1/3*yp1-1/6*ym1-1/6*ym1*ym1/yp1
+    a2=yp1-ym1-a1-a3
+    RESULT=~+a1*f(iy-1) + a2*f(iy) + a3*f(iy+1)
   REPEAT
-END zintegr
+END yintegr

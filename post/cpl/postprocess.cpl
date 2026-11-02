@@ -1,5 +1,5 @@
 ! Disable floating-point traps before any USEd module is initialized.  CPL
-! emits module-level initialization (notably zdiscret's mesh construction)
+! emits module-level initialization (notably ydiscret's mesh construction)
 ! before the executable statements in convenience_postprocess.cpl.  Some MPI
 ! environments inherit enabled traps, so disabling them there is too late.
 #include <fenv.h>
@@ -22,7 +22,7 @@ USE fft
 USE src/readinput
 USE src/linsolver_smw
 USE src/S2config
-USE src/zdiscret
+USE src/ydiscret
 USE src/convenience_postprocess
 USE src/hstfieldio
 USE src/io_postprocess
@@ -52,11 +52,11 @@ USE src/mod_rey_decomp
         ! Compute velocity gradient
         velocity_gradient(Vder)
         ! Update periodic boundary condition for Vder
-        DO pbc(Vder(ix,iy,*,i)) FOR ALL ix,iy,i
+        DO pbc(Vder(ix,iz,*,i)) FOR ALL ix,iz,i
         ! Compute pressure
         compute_pressure(Vder)
         ! Update periodic boundary condition for pressure
-        DO pbc(pressure(ix,iy,*)) FOR ALL ix,iy 
+        DO pbc(pressure(ix,iz,*)) FOR ALL ix,iz
         ! Save pressure field
         pfield_name = WRITE(path_to_pfields'pField'nf'.fld')
         pressuredata = CREATE(pfield_name)
@@ -112,7 +112,7 @@ LOOP FOR nf = nstart TO nend
         ! Compute derivatives
         velocity_gradient(Vder)
         ! Update periodic boundary condition for Vder
-        DO pbc(Vder(ix,iy,*,i)) FOR ALL ix,iy,i
+        DO pbc(Vder(ix,iz,*,i)) FOR ALL ix,iz,i
         ! Accumulate budget terms
         accum_budget()
     #endif

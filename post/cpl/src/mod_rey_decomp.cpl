@@ -1,7 +1,7 @@
 ! Types
 MEANFIELDS = STRUCTURED ARRAY(Um, Vm, Wm, Pm) OF REAL
 ! Variables in memory
-ARRAY(-1..nz+1) OF MEANFIELDS mean_fld_prof=0
+ARRAY(-2..ny+1) OF MEANFIELDS mean_fld_prof=0
 ARRAY(1..dn)   OF MEANFIELDS mean_fld_phase=0, mean_fld_phase_chunk=0
 ARRAY(1..dn)   OF REAL       S2_m_phase=0, S2_m_phase_chunk=0
 REAL S2_f
@@ -14,13 +14,13 @@ SUBROUTINE accum_means()
         Pm = pressure(0,0,*).REAL
     END WITH
     ! Periodic b.c. for means (stat. homogeneity)
-    mean_fld_prof(0   ) = mean_fld_prof(nz-1)
-    mean_fld_prof(-1  ) = mean_fld_prof(nz-2)
-    mean_fld_prof(nz  ) = mean_fld_prof(1)
-    mean_fld_prof(nz+1) = mean_fld_prof(2)
-    ! Integrate over z and accumulate over fields
+    mean_fld_prof(ny  ) = mean_fld_prof(0)
+    mean_fld_prof(ny+1) = mean_fld_prof(1)
+    mean_fld_prof(-1  ) = mean_fld_prof(ny-1)
+    mean_fld_prof(-2  ) = mean_fld_prof(ny-2)
+    ! Integrate over y and accumulate over fields
     LOOP FOR ALL i
-        mean_fld_phase_chunk(phase_num, i) = ~+ zintegr(mean_fld_prof(*, i))/Lz_ext
+        mean_fld_phase_chunk(phase_num, i) = ~+ yintegr(mean_fld_prof(*, i))/Ly_ext
     REPEAT LOOP
     ! Accumulate phase-avg. S2
     S2_m_phase_chunk(phase_num) = ~+ S2
@@ -44,10 +44,10 @@ END mpi_comm_means
 
 SUBROUTINE apply_rey_decomp()
     S2_f = S2 - S2_m_phase(phase_num)
-    LOOP FOR iz = 1 TO nz-1 WITH mean_fld_phase(phase_num), V(0,0,iz)
+    LOOP FOR iy = 0 TO ny-1 WITH mean_fld_phase(phase_num), V(0,0,iy)
         u.REAL           = ~- Um
         v.REAL           = ~- Vm
         w.REAL           = ~- Wm
-        pressure(0,0,iz) = ~- Pm
+        pressure(0,0,iy) = ~- Pm
     REPEAT LOOP
 END apply_rey_decomp

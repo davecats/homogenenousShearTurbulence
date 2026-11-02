@@ -68,14 +68,18 @@ feenableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
 ! ------------------------------------
 ! Extended Fourier-lattice for FFTs
 INTEGER nxd=3*nx DIV 2 -1; DO INC nxd UNTIL FFTfit(nxd)
-INTEGER nyd=3*ny -1; DO INC nyd UNTIL FFTfit(nyd)
+INTEGER nzd=3*nz -1; DO INC nzd UNTIL FFTfit(nzd)
 ! Types
-VELOCITY  = STRUCTURED ARRAY(u,v,w) OF COMPLEX
+! x streamwise (u), y vertical (v), z spanwise (w).  VELOCITY lists the
+! components in the order of the velocity files, which store the spanwise
+! component before the vertical one (hstfieldio.cpl); the order is irrelevant
+! everywhere else, where the components are addressed by name.
+VELOCITY  = STRUCTURED ARRAY(u,w,v) OF COMPLEX
 DERIVS    = STRUCTURED ARRAY(ux,uy,uz,vx,vy,vz,wx,wy,wz) OF COMPLEX
-! Physical variables
-ARRAY(0..nx,-ny..ny,-1..nz+1) OF VELOCITY V        = 0
-ARRAY(0..nx,-ny..ny,-1..nz+1) OF DERIVS   Vder     = 0
-ARRAY(0..nx,-ny..ny,-1..nz+1) OF COMPLEX  pressure = 0
+! Physical variables: Fourier modes (ix,iz), mesh rows iy (ghost rows included)
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF VELOCITY V        = 0
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF DERIVS   Vder     = 0
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF COMPLEX  pressure = 0
 ! Phase-related variables
 INTEGER phase_num, phase_pos
 INTEGER nf_phase=[(nfmax-nfmin) DIV dn]+1
@@ -95,34 +99,36 @@ IF nf_vec_bad>0 THEN
   STOP
 END IF
 
-! Actual domain size for computing averages using zintegr()
-REAL Lz_ext = 0
-DO Lz_ext = ~+ [z(iz+1) - z(iz-1)] FOR iz = 1 TO nz-1 BY 2
+! Actual domain size for computing averages using yintegr()
+REAL Ly_ext = 0
+DO Ly_ext = ~+ [y(iy+1) - y(iy-1)] FOR iy = 0 TO ny-1 BY 2
 
 
-! Outputs 
+! Outputs
 ! -----------------------------
-POINTER TO STORED ARRAY(0..nx,-ny..ny,-1..nz+1) OF COMPLEX pressuredata
+POINTER TO STORED ARRAY(0..nx,-nz..nz,-2..ny+1) OF COMPLEX pressuredata
 
-SUBROUTINE updateD0mat(INTEGER ix,iy)
+! The corner entries of the SMW system (rows numbered 1..ny, row iy+1 being the
+! equation of mesh row iy)
+SUBROUTINE updateD0mat(INTEGER ix,iz)
   D0mat=D0mat_0
-  D0mat(1,1)    = derivatives(1   ).d0(-2) * spbc_shift(ix, iy, nz-2, -1  )
-  D0mat(1,2)    = derivatives(1   ).d0(-1) * spbc_shift(ix, iy, nz-1,  0  )
-  D0mat(2,1)    = derivatives(2   ).d0(-2) * spbc_shift(ix, iy, nz-1,  0  )
-  D0mat(nz-2,5) = derivatives(nz-2).d0( 2) * spbc_shift(ix, iy, 1   , nz  )
-  D0mat(nz-1,4) = derivatives(nz-1).d0( 1) * spbc_shift(ix, iy, 1   , nz  )
-  D0mat(nz-1,5) = derivatives(nz-1).d0( 2) * spbc_shift(ix, iy, 2   , nz+1)
+  D0mat(1,1)    = derivatives(0   ).d0(-2) * spbc_shift(ix, iz, ny-2, -2  )
+  D0mat(1,2)    = derivatives(0   ).d0(-1) * spbc_shift(ix, iz, ny-1, -1  )
+  D0mat(2,1)    = derivatives(1   ).d0(-2) * spbc_shift(ix, iz, ny-1, -1  )
+  D0mat(ny-1,5) = derivatives(ny-2).d0( 2) * spbc_shift(ix, iz, 0   , ny  )
+  D0mat(ny,4)   = derivatives(ny-1).d0( 1) * spbc_shift(ix, iz, 0   , ny  )
+  D0mat(ny,5)   = derivatives(ny-1).d0( 2) * spbc_shift(ix, iz, 1   , ny+1)
 END updateD0mat
 
 SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS gradV)
   LOOP FOR ix=0 TO nx
     ialpha = I*alpha0*ix
-    LOOP FOR iy=-ny TO ny WITH gradV(ix,iy,*), V(ix,iy,*)
-      ibeta = I*beta0*iy  
-      updateD0mat(ix,iy)
+    LOOP FOR iz=-nz TO nz WITH gradV(ix,iz,*), V(ix,iz,*)
+      ibeta = I*beta0*iz
+      updateD0mat(ix,iz)
       ux(*)=ialpha*u(*);   vx(*)=ialpha*v(*);     wx(*)=ialpha*w(*)
-      uy(*)=ibeta*u(*);    vy(*)=ibeta*v(*);      wy(*)=ibeta*w(*)
-      deriv(u(*),uz(*),ix,iy); deriv(v(*),vz(*),ix,iy); deriv(w(*),wz(*),ix,iy); 
+      uz(*)=ibeta*u(*);    vz(*)=ibeta*v(*);      wz(*)=ibeta*w(*)
+      deriv(u(*),uy(*),ix,iz); deriv(v(*),vy(*),ix,iz); deriv(w(*),wy(*),ix,iz);
     REPEAT
   REPEAT
 END velocity_gradient
@@ -131,14 +137,14 @@ END velocity_gradient
 ! derivm (real first derivative for deriving mean quantities)
 ! ----------------
 SUBROUTINE derivm(ARRAY(*) OF REAL f0,f1^)
-  DO WITH derivatives(iz) f1(iz)=[SUM d1(k).REAL*f0({[(iz+k-1) MOD (nz-1)]+1}) FOR k=-2 TO 2] FOR iz=1 TO nz-1
-  penta_smw_solve_r(nz-1, D0mat.REAL, f1(1..nz-1), f1(1..nz-1))
+  DO WITH derivatives(iy) f1(iy)=[SUM d1(k).REAL*f0({(iy+k) MOD ny}) FOR k=-2 TO 2] FOR iy=0 TO ny-1
+  penta_smw_solve_r(ny, D0mat.REAL, f1(0..ny-1), f1(0..ny-1))
 END derivm
 
 ! ----------------
 ! deriv2m (real second derivative for deriving mean quantities)
 ! ----------------
 SUBROUTINE deriv2m(ARRAY(*) OF REAL f0,f2^)
-  DO WITH derivatives(iz) f2(iz)=[SUM d2(k).REAL*f0({[(iz+k-1) MOD (nz-1)]+1}) FOR k=-2 TO 2] FOR iz=1 TO nz-1
-  penta_smw_solve_r(nz-1, D0mat.REAL, f2(1..nz-1), f2(1..nz-1))
+  DO WITH derivatives(iy) f2(iy)=[SUM d2(k).REAL*f0({(iy+k) MOD ny}) FOR k=-2 TO 2] FOR iy=0 TO ny-1
+  penta_smw_solve_r(ny, D0mat.REAL, f2(0..ny-1), f2(0..ny-1))
 END deriv2m

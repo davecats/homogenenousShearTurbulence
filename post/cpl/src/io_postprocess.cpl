@@ -4,7 +4,7 @@ IF rank=0 THEN
     WRITE "POSTPROCESS DATA:"
     WRITE BY NAME path_name
     WRITE BY NAME nfmin, nfmax, dn
-    WRITE BY NAME lz
+    WRITE BY NAME ly
     #ifdef compute_pressure
         WRITE "computing pressure field"
     #endif

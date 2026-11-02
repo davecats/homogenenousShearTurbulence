@@ -1,7 +1,7 @@
 ! Read discretization, physics and time-control parameters for the post
 ! processor from the flat token file readinput.in, which is GENERATED from
 ! the new simulation input deck (hst.in, a Fortran namelist) by
-! post/cpl/convert_hstin.py.
+! post/cpl/src/convert_hstin.py.
 !
 ! Rationale: the new simulator (src/hst_io.f90) writes its velocity files in
 ! the CPL layout and header, so the post-processor reads the fields
@@ -11,26 +11,31 @@
 ! cannot parse hst.in verbatim.  convert_hstin.py extracts the values CPL
 ! needs into readinput.in (flat tokens, in the READ order below).
 !
-! Axis relabel: hst.in's &mesh uses the NEW-code convention where
-!   ny = physical shear points, nz = spanwise Fourier modes.
-! The post-processor uses the CPL/field-header convention
-!   ny_cpl = spanwise modes (= nz_new),   nz_cpl = ny_new + 1
-!   (nx unchanged).
+! Axis convention: the post-processor uses the convention of the simulator,
+!   x streamwise (u, Fourier modes 0..nx, alpha0),
+!   y vertical, the shear direction (v, compact finite differences,
+!     ny unique points over ly, rows iy=0..ny-1 plus the ghost rows -2,-1,ny,ny+1),
+!   z spanwise (w, Fourier modes -nz..nz, beta0),
+! with the mean flow U = S*y and W = S2(t)*y.  nx, ny, nz and ly are the
+! values of hst.in's &mesh, taken verbatim.  The legacy CPL code, whose
+! velocity files the post-processor reads, labels the spanwise and the shear
+! axes the other way round (y and z); that relabelling is confined to
+! hstfieldio.cpl.
 !
 ! nx/ny/nz are declared as plain INTEGERs (NO CONSTANT) and are READ from
 ! readinput.in FIRST, so they follow hst.in at runtime.  convert_hstin.py
-! emits them already converted to the CPL convention above, ahead of every
-! other token, so these globals are set before any field array is built.
-! CPL's compiler automatically heap-allocates ARRAY declarations whose bounds
-! are not compile-time constants, sizing them from these runtime values.
+! emits them ahead of every other token, so these globals are set before any
+! field array is built.  CPL's compiler automatically heap-allocates ARRAY
+! declarations whose bounds are not compile-time constants, sizing them from
+! these runtime values.
 
-! ---- Array extents: RUNTIME CPL-convention integers (read first) ---------
+! ---- Array extents: RUNTIME integers (read first) ------------------------
 ! nx, ny, nz come from the &mesh port of convert_hstin.py (see above).
 INTEGER nx, ny, nz
 
 ! ---- Runtime scalars (kept as non-CONSTANT globals so the renamed new-deck
 !      tokens can be mapped onto the legacy names the downstream modules use) --
-REAL alpha0, beta0, lz, htcoeff, Re
+REAL alpha0, beta0, ly, htcoeff, Re
 REAL S
 REAL A, T, delta_SL, t0_SL, dt_rise
 REAL deltat
@@ -49,14 +54,13 @@ REAL   s2_start           ! &physics s2_start     -> t0_SL
 STRING restart_file       ! &time_control restart_file -> Vfield
 
 ! Read from input file.  nx/ny/nz MUST be read first: convert_hstin.py emits
-! them as the first three tokens, already in the CPL convention, so they are
-! assigned to the runtime globals before any field array is built.
+! them as the first three tokens, so they are assigned to the runtime globals
+! before any field array is built.
 STRING sim_input=WRITE("readinput.in")
 
 FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
-  ! &mesh port ...: nx, ny, nz (CPL convention), then alfa0, beta0, lz,
-  !                  and ystretch.  Fortran ly is CPL lz after the axis relabel.
-  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, lz, ystretch
+  ! &mesh ...: nx, ny, nz, then alfa0, beta0, ly and ystretch.
+  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ly, ystretch
   ! &physics ...: re, S, s2_amplitude, s2_period, s2_start, ...
   READ BY NAME FROM data re, S, s2_amplitude, s2_period, s2_start
   ! &time_control ...: deltat, cflmax, t_max, dt_stat, dt_field, dt_save,
@@ -70,23 +74,22 @@ FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
   ! REPEAT
 CLOSE data
 
-! Validate mesh dimensions before zdiscret.cpl constructs the mesh.  In
-! particular, zdiscret uses nz-1 in several denominators and requires at
-! least two wall-normal points.
+! Validate mesh dimensions before ydiscret.cpl constructs the mesh.  In
+! particular, ydiscret divides by ny and needs at least one vertical point.
 IF nx<=0 THEN
   WRITE "ERROR: nx must be positive"
   STOP
 END IF
-IF ny<0 THEN
-  WRITE "ERROR: ny must be nonnegative"
+IF nz<0 THEN
+  WRITE "ERROR: nz must be nonnegative"
   STOP
 END IF
-IF nz<=1 THEN
-  WRITE "ERROR: nz must be greater than 1"
+IF ny<=0 THEN
+  WRITE "ERROR: ny must be positive"
   STOP
 END IF
-IF lz<=0 THEN
-  WRITE "ERROR: lz must be positive"
+IF ly<=0 THEN
+  WRITE "ERROR: ly must be positive"
   STOP
 END IF
 
