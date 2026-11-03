@@ -8,7 +8,7 @@
 ! components are stored in the order 1:uu 2:vv 3:ww 4:uv 5:uw 6:vw (the
 ! cross-terms are co-spectra).  The values are mode energies, not densities:
 ! sum_iy w(iy) sum_{ix,iz} E_ij equals the corresponding entry of velstats.dat
-! with the y-average weights w(iy) (spec_wy below).
+! with the y-average weights w(iy) (yavg_w, convenience_postprocess.cpl).
 !
 ! The Reynolds decomposition is the phase-wise one of mod_rey_decomp.cpl, i.e. the
 ! fluctuation is taken about the mean of the fields in the same phase
@@ -26,25 +26,10 @@
 
 ! Variables in memory
 ! ------------------------------------
-ARRAY(0..ny-1) OF REAL spec_wy
 ARRAY(1..dn,1..6,0..ny-1,0..nx,0..nz) OF REAL spec_chunk=0
 ARRAY(1..6,0..ny-1,0..nx,0..nz) OF REAL spec_tot
 ARRAY(1..dn,0..nx,1..6) OF REAL spec_kx=0
 ARRAY(1..dn,0..nz,1..6) OF REAL spec_kz=0
-
-! Weights of the rows in the y average: yintegr(f)/Ly_ext = SUM spec_wy(iy)*f(iy)
-! (ghost rows are the periodic images of the rows 0..ny-1)
-SUBROUTINE setup_spectra_weights()
-    ARRAY(-2..ny+1) OF REAL e
-    LOOP FOR iy0=0 TO ny-1
-        e=0
-        e(iy0)=1
-        IF iy0<2 THEN e(ny+iy0)=1
-        IF iy0>=ny-2 THEN e(iy0-ny)=1
-        spec_wy(iy0)=yintegr(e)/Ly_ext
-    REPEAT
-END setup_spectra_weights
-setup_spectra_weights()
 
 SUBROUTINE accum_spectra()
     LOOP FOR iy=0 TO ny-1
@@ -84,8 +69,8 @@ SUBROUTINE write_spectra()
             REPEAT
             ! y-averaged one-dimensional spectra
             LOOP FOR c=1 TO 6 AND iy=0 TO ny-1 AND ix=0 TO nx AND ik=0 TO nz
-                spec_kx(np,ix,c) = ~+ spec_wy(iy)*spec_tot(c,iy,ix,ik)
-                spec_kz(np,ik,c) = ~+ spec_wy(iy)*spec_tot(c,iy,ix,ik)
+                spec_kx(np,ix,c) = ~+ yavg_w(iy)*spec_tot(c,iy,ix,ik)
+                spec_kz(np,ik,c) = ~+ yavg_w(iy)*spec_tot(c,iy,ix,ik)
             REPEAT
         END IF
     REPEAT

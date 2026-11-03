@@ -12,6 +12,16 @@ fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
 ! compile-time flags (physics- and numerics-related options)
 USE src/flags
 
+! the budget and the pressure-strain spectra need the pressure and the velocity gradient
+#ifdef compute_budget
+    #define need_pressure_gradient
+#endif
+#ifdef compute_pstrain_spectra
+    #ifndef need_pressure_gradient
+        #define need_pressure_gradient
+    #endif
+#endif
+
 ! standard cpl modules
 USE complex
 USE rbmat
@@ -38,6 +48,9 @@ USE src/mod_rey_decomp
 #endif
 #ifdef compute_spectra
     USE src/mod_compute_spectra
+#endif
+#ifdef compute_pstrain_spectra
+    USE src/mod_compute_pstrain_spectra
 #endif
 #ifdef convert_to_vtk
     USE src/mod_fld2vtk
@@ -100,7 +113,7 @@ LOOP FOR nf = nstart TO nend
     vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
     read_vel_field(vel_fld_name)
     WRITE "VAR: reading " vel_fld_name " at time=" time " ..."
-    #ifdef compute_budget
+    #ifdef need_pressure_gradient
         ! Read pressure field
         press_fld_name = WRITE(path_to_pfields'pField'nf'.fld')
         read_press_field(press_fld_name)
@@ -115,13 +128,19 @@ LOOP FOR nf = nstart TO nend
         ! Accumulate velocity spectra
         accum_spectra()
     #endif
-    #ifdef compute_budget
+    #ifdef need_pressure_gradient
         ! Compute derivatives
         velocity_gradient(Vder)
         ! Update periodic boundary condition for Vder
         DO pbc(Vder(ix,iz,*,i)) FOR ALL ix,iz,i
+    #endif
+    #ifdef compute_budget
         ! Accumulate budget terms
         accum_budget()
+    #endif
+    #ifdef compute_pstrain_spectra
+        ! Accumulate pressure-strain spectra
+        accum_pstrain_spectra()
     #endif
 REPEAT LOOP
 
@@ -135,6 +154,9 @@ REPEAT LOOP
 #endif
 #ifdef compute_spectra
     write_spectra()
+#endif
+#ifdef compute_pstrain_spectra
+    write_pstrain_spectra()
 #endif
 
 MPI_Finalize()

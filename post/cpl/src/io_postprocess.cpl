@@ -19,6 +19,9 @@ IF rank=0 THEN
     #ifdef compute_spectra
         WRITE "velocity spectra"
     #endif
+    #ifdef compute_pstrain_spectra
+        WRITE "pressure-strain spectra"
+    #endif
     WRITE "---------------------------------------------------------------------------------------"
     WRITE ""
 END IF

@@ -65,7 +65,8 @@ The flags are in `src/flags.cpl` (`#define` = on, `! #define` = off):
 | `compute_pressure` | recomputes the pressure from the velocity and overwrites `p_fields/` | `p_fields/pField<n>.fld` |
 | `compute_variances` | mean velocities and Reynolds stresses | `statistics/velstats.dat` |
 | `compute_budget` | budgets of the Reynolds stresses | `statistics/budget_<ij>.dat` |
-| `compute_spectra` | velocity spectra | `statistics/spectra*.{bin,dat}` |
+| `compute_spectra` | velocity spectra | `statistics/spectra.bin`, `spectra_k{x,z}.dat` |
+| `compute_pstrain_spectra` | pressure-strain spectra | `statistics/pstrain_spectra.bin`, `pstrain_spectra_k{x,z}.dat` |
 | `convert_to_vtk` | velocity to VTK | `vtks/field<n>.vtk` |
 
 Without `compute_pressure` the pressure files written by `hst` are used (they are
@@ -206,7 +207,46 @@ For a spectral density, divide by `cfg.alfa0 * cfg.beta0`.
 While running, every rank holds the spectra of all `dn` phases:
 `8 * dn * 6 * ny * (nx+1) * (nz+1)` bytes (about 75 MB per phase for
 `nx=191, ny=128, nz=63`), plus one phase as receive buffer.  The phases are reduced
-over the ranks and appended to `spectra.bin` one at a time.
+over the ranks and appended to `spectra.bin` one at a time.  The pressure-strain
+spectra need the same amount again when both are switched on.
+
+## Pressure-strain spectra
+
+`compute_pstrain_spectra` resolves the pressure-strain term of the Reynolds-stress
+budget in wavenumber space.  It needs the pressure (read from `p_fields/`, or
+computed with `compute_pressure`) and the velocity gradient, and uses the
+fluctuations about the phase mean, like the velocity spectra.
+
+For every row `iy`, mode `ix` and spanwise mode `iz`, with `f|p = f conj(p)`:
+
+| component | `PS_ij` (before folding `+-iz`, factor `c` as for the velocity spectra) |
+|---|---|
+| 1 `uu` | `2 c Re[ ux\|p ]` |
+| 2 `vv` | `2 c Re[ vy\|p ]` |
+| 3 `ww` | `2 c Re[ wz\|p ]` |
+| 4 `uv` | `c Re[ (uy\|p) + (vx\|p) ]` |
+| 5 `uw` | `c Re[ (uz\|p) + (wx\|p) ]` |
+| 6 `vw` | `c Re[ (vz\|p) + (wy\|p) ]` |
+
+where `ux` is `du/dx`, `uy` is `du/dy` (vertical derivative), `uz` is `du/dz`
+(spanwise derivative), and so on.  These are the contributions of each wavenumber
+to the pressure-strain `<p (du_i/dx_j + du_j/dx_i)>`; they are mode energies in
+the same sense as the velocity spectra.  The y-average of their sum over all `ix`,
+`|iz|` equals the column `pstrain` of `budget_<ij>.dat` (to round-off).  The trace
+`PS_uu + PS_vv + PS_ww` vanishes by incompressibility.
+
+The files have exactly the layout of the velocity spectra:
+
+* `statistics/pstrain_spectra.bin`: raw `float64`, no header, C order, shape
+  `(dn, 6, ny, nx+1, nz+1)` indexed `(phase, component, iy, ix, |iz|)`, components
+  in the order `uu vv ww uv uw vw`.  Read it, and y-average it, exactly as shown above
+  for `spectra.bin`.
+* `statistics/pstrain_spectra_kx.dat`, `pstrain_spectra_kz.dat`: y-averaged 1D
+  spectra, headers `# phase ix kx PSuu PSvv PSww PSuv PSuw PSvw` and
+  `# phase iz kz PSuu ...`.
+
+(The legacy tool computed only four components in the legacy axes: its `ps_uu`,
+`ps_vv`, `ps_ww`, `ps_uw` are here `uu`, `ww`, `vv`, `uv`; `uw` and `vw` are new.)
 
 ## Source files
 
@@ -225,7 +265,8 @@ over the ranks and appended to `spectra.bin` one at a time.
 | `src/mod_rey_decomp.cpl` | phase means and the Reynolds decomposition |
 | `src/mod_compute_variances.cpl` | `velstats.dat` |
 | `src/mod_compute_budget.cpl` | budgets |
-| `src/mod_compute_spectra.cpl` | spectra |
+| `src/mod_compute_spectra.cpl` | velocity spectra |
+| `src/mod_compute_pstrain_spectra.cpl` | pressure-strain spectra |
 | `src/mod_fld2vtk.cpl` | VTK output |
 | `meanandvar_utils/` | mean and uncertainty of a time series (`Runtimedata`), independent of the rest |
 
