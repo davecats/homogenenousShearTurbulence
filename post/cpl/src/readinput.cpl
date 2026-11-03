@@ -37,7 +37,6 @@ INTEGER nx, ny, nz
 !      tokens can be mapped onto the legacy names the downstream modules use) --
 REAL alpha0, beta0, ly, htcoeff, Re
 REAL S
-REAL A, T, delta_SL, t0_SL, dt_rise
 REAL deltat
 REAL cflmax, t_max
 REAL dt_field, dt_save, dt_stat, dt_chk_cfl
@@ -48,9 +47,6 @@ STRING  Vfield
 REAL   alfa0              ! &mesh alfa0          (new name for alpha0)
 REAL   re                 ! &physics re          (new name for Re)
 REAL   ystretch           ! &mesh ystretch       (new name for htcoeff)
-REAL   s2_amplitude       ! &physics s2_amplitude -> A
-REAL   s2_period          ! &physics s2_period    -> T
-REAL   s2_start           ! &physics s2_start     -> t0_SL
 STRING restart_file       ! &time_control restart_file -> Vfield
 
 ! Read from input file.  nx/ny/nz MUST be read first: convert_hstin.py emits
@@ -61,8 +57,9 @@ STRING sim_input=WRITE("readinput.in")
 FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
   ! &mesh ...: nx, ny, nz, then alfa0, beta0, ly and ystretch.
   READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ly, ystretch
-  ! &physics ...: re, S, s2_amplitude, s2_period, s2_start, ...
-  READ BY NAME FROM data re, S, s2_amplitude, s2_period, s2_start
+  ! &physics ...: re, S.  The spanwise shear S2(t) is not read here: it
+  ! follows from each field header (hstfieldio.cpl).
+  READ BY NAME FROM data re, S
   ! &time_control ...: deltat, cflmax, t_max, dt_stat, dt_field, dt_save,
   !                    time_from_restart
   READ BY NAME FROM data deltat, cflmax
@@ -97,16 +94,6 @@ END IF
 alpha0    = alfa0        ! renamed alfa0 -> alpha0
 htcoeff   = ystretch     ! &mesh ystretch -> htcoeff (0 = uniform grid)
 Re        = re           ! renamed re    -> Re
-! &physics: unsteady spanwise shear S2
-A         = s2_amplitude
-T         = s2_period
-t0_SL     = s2_start
-delta_SL  = 0            ! unused by S2config; kept for its legacy slot
-! The legacy `dt_rise` (S2 ramp-up duration) has no single token in hst.in
-! (only the boolean sl_ramp).  Keep the hard-ramp default (0 = no smooth
-! ramp); to enable the smooth ramp add a `s2_rise_dt` token to &physics and
-! read it into dt_rise above (token==name).
-dt_rise = 0
 ! Vfield = restart_file    ! startup velocity file name (informational)
 
 REAL CONSTANT eps_num=1E-10
@@ -121,4 +108,5 @@ ELSE
 END IF
 
 REAL S1 = S
+REAL S2 = 0.0     ! instantaneous spanwise shear: read from each field header (hstfieldio.cpl)
 

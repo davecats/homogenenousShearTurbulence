@@ -22,7 +22,8 @@ HST_MAIN=${HST_MAIN:-$HOME/Codes/hst/hst-main}
 val() { v=$(sed 's/!.*//' "$run/hst.in" | grep -oE "\b$1\b *= *[^,/ ]+" | tail -1 | sed 's/.*= *//'); echo "${v:-$2}"; }
 nx=$(val nx 63); ny=$(val ny 128); nz=$(val nz 63)
 alfa0=$(val alfa0 2.0943951023931953); beta0=$(val beta0 6.283185307179586); ystretch=$(val ystretch 0.0)
-re=$(val re 1000.0); S=$(val S 1.0); s2a=$(val s2_amplitude 0.0); s2p=$(val s2_period 0.0); s2s=$(val s2_start 0.0)
+re=$(val re 1000.0); S=$(val S 1.0); s2m=$(val s2_mean 0.0); s2a=$(val s2_amplitude 0.0); s2p=$(val s2_period 0.0); s2s=$(val s2_start 0.0)
+awk "BEGIN {exit !($s2m != 0)}" && { echo "s2_mean /= 0 in $run/hst.in: the legacy hst-main (A, T, t0_SL) has no S2 mean"; exit 1; }
 deltat=$(val deltat 0.0); cflmax=$(val cflmax 1.0); t_max=$(val t_max 100.0)
 dt_stat=$(val dt_stat 0.01); dt_field=$(val dt_field 10.0); dt_save=$(val dt_save 10.0)
 htcoeff=-1; awk "BEGIN {exit !($ystretch > 0)}" && htcoeff=$ystretch

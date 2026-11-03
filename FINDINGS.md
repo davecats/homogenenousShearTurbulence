@@ -118,9 +118,10 @@ The earlier private format and `tests/to_cpl_field.py` are gone.
 ## Unsteady spanwise shear S2 (DESIGN.md section 10 wish, done)
 
 `&physics`
-takes `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
-the CPL `S2data.cpl` law `S2(t) = A sin(2 pi (t - t0)/T)` for `t >= t0`
-(`A`, `T`, `t0_SL` there).  It enters in four places: the wrap phase of
+takes `s2_mean`, `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
+the CPL `S2data.cpl` law `S2(t) = S2_0 + A sin(2 pi (t - t0)/T)` for `t >= t0`
+(`A`, `T`, `t0_SL` there; `s2_mean` = `S2_0` has no CPL counterpart, and with
+`T = 0` the constant is `S2_0 + A`).  It enters in four places: the wrap phase of
 the ghost rows and of the line-solve corners, now
 `exp(-i (kx gamma_x + kz gamma_y))` with `gamma_y = int S2 dt` in closed
 form; the exact-advection phase over a substep,

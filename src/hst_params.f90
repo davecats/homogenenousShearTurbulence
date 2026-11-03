@@ -34,9 +34,10 @@ module hst_params
   real(C_DOUBLE), save :: S                   ! mean shear dU/dy
   logical, save :: linear                     ! .true.: nonlinear terms off
   logical, save :: exact_shift                ! .true.: advect the unweighted quantities (FINDINGS.md)
-  ! unsteady spanwise mean shear dW/dy = S2(t) = s2_amplitude * sin(2 pi (t - s2_start)/s2_period)
-  ! for t >= s2_start (constant s2_amplitude when s2_period = 0); zero amplitude switches it off
-  real(C_DOUBLE), save :: s2_amplitude, s2_period, s2_start
+  ! spanwise mean shear dW/dy = S2(t) = s2_mean + s2_amplitude * sin(2 pi (t - s2_start)/s2_period)
+  ! for t >= s2_start (constant s2_mean + s2_amplitude when s2_period = 0); zero mean and
+  ! amplitude switch it off
+  real(C_DOUBLE), save :: s2_mean, s2_amplitude, s2_period, s2_start
   ! Stokes layer: oscillating spanwise mean profile at mid-box (hst_stokes)
   real(C_DOUBLE), save :: sl_amplitude, sl_period, sl_delta, sl_start
   logical, save :: sl_bodyforce, sl_ramp

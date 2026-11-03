@@ -33,7 +33,7 @@ _GROUP_KEYS: dict[str, dict[str, str]] = {
     "physics": {
         "re": float, "S": float, "linear": bool,
         "exact_shift": bool,
-        "s2_amplitude": float, "s2_period": float, "s2_start": float,
+        "s2_mean": float, "s2_amplitude": float, "s2_period": float, "s2_start": float,
         "sl_amplitude": float, "sl_period": float, "sl_delta": float,
         "sl_start": float, "sl_bodyforce": bool, "sl_ramp": bool,
     },
@@ -52,7 +52,7 @@ _DEFAULTS: dict[str, dict[str, object]] = {
              "ly": 2.0, "ystretch": 0.0, "line_chunk": 0,
              "transport": "auto", "npy": 1},
     "physics": {"re": 1000.0, "S": 1.0, "linear": False, "exact_shift": False,
-                "s2_amplitude": 0.0, "s2_period": 0.0, "s2_start": 0.0,
+                "s2_mean": 0.0, "s2_amplitude": 0.0, "s2_period": 0.0, "s2_start": 0.0,
                 "sl_amplitude": 0.0, "sl_period": 1.0, "sl_delta": 0.02,
                 "sl_start": 0.0, "sl_bodyforce": True, "sl_ramp": False},
     "time_control": {"deltat": 0.0, "cflmax": 1.0, "t_max": 100.0,

@@ -31,7 +31,6 @@ USE fft
 ! program modules
 USE src/readinput
 USE src/linsolver_smw
-USE src/S2config
 USE src/ydiscret
 USE src/convenience_postprocess
 USE src/hstfieldio

@@ -26,6 +26,7 @@ run 1     test_kelvin kelvin.in
 run 1     test_kelvin kelvin_exact.in
 run 1     test_kelvin kelvin_s2const.in
 run 1     test_kelvin kelvin_s2osc.in
+run 1     test_kelvin kelvin_s2mean.in
 run 1     test_kelvin kelvin_stretched.in
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in

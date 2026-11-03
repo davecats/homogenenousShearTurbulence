@@ -17,7 +17,7 @@ contains
     real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
 
     namelist /mesh/ nx, ny, nz, alfa0, beta0, ly, ystretch, line_chunk, transport, npy
-    namelist /physics/ re, S, linear, exact_shift, s2_amplitude, s2_period, s2_start, &
+    namelist /physics/ re, S, linear, exact_shift, s2_mean, s2_amplitude, s2_period, s2_start, &
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
     namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
@@ -26,7 +26,7 @@ contains
     nx = 63; ny = 128; nz = 63
     ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI; ystretch = 0.0d0; line_chunk = 0; transport = 'auto'; npy = 0
     re = 1000.0d0; S = 1.0d0; linear = .false.; exact_shift = .false.
-    s2_amplitude = 0.0d0; s2_period = 0.0d0; s2_start = 0.0d0
+    s2_mean = 0.0d0; s2_amplitude = 0.0d0; s2_period = 0.0d0; s2_start = 0.0d0
     sl_amplitude = 0.0d0; sl_period = 1.0d0; sl_delta = 0.02d0; sl_start = 0.0d0; sl_bodyforce = .true.; sl_ramp = .false.
     deltat = 0.0d0; cflmax = 1.0d0; t_max = 100.0d0; nstep = 1000000; wall_max = 0.0d0
     dt_stat = 0.01d0; dt_field = 10.0d0; dt_save = 10.0d0
@@ -56,7 +56,7 @@ contains
       print *, "ERROR: restart_remap must be 'strict' or 'mode_index'"
       error stop 1
     end if
-    if (sl_amplitude /= 0.0d0 .and. s2_amplitude /= 0.0d0) then
+    if (sl_amplitude /= 0.0d0 .and. (s2_amplitude /= 0.0d0 .or. s2_mean /= 0.0d0)) then
       print *, 'ERROR: the Stokes layer and the spanwise shear S2 cannot both be active (as in hst-main)'
       error stop 1
     end if
@@ -110,8 +110,8 @@ contains
     write (*, '(A,F10.6,A,F10.6,A,F8.3)') '   alfa0 =', alfa0, '   beta0 =', beta0, '   ystretch =', ystretch
     write (*, '(A,F10.2,A,F10.6,A,L1,A,L1)') '   re    =', re, '   S     =', S, '   linear =', linear, &
       '   exact_shift =', exact_shift
-    if (s2_amplitude /= 0.0d0) write (*, '(A,F10.6,A,F10.6,A,F10.6)') &
-      '   S2: amplitude=', s2_amplitude, '   period=', s2_period, '   start=', s2_start
+    if (s2_amplitude /= 0.0d0 .or. s2_mean /= 0.0d0) write (*, '(A,F10.6,A,F10.6,A,F10.6,A,F10.6)') &
+      '   S2: mean=', s2_mean, '   amplitude=', s2_amplitude, '   period=', s2_period, '   start=', s2_start
     if (sl_amplitude /= 0.0d0) write (*, '(A,F8.4,A,F8.4,A,F8.4,A,F8.4,A,L1,A,L1)') &
       '   Stokes layer: amplitude=', sl_amplitude, '  period=', sl_period, '  delta=', sl_delta, &
       '  start=', sl_start, '  bodyforce=', sl_bodyforce, '  ramp=', sl_ramp
