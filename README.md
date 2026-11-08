@@ -13,7 +13,10 @@ Incompressible Navier-Stokes fluctuations about the mean flow `U = S*y`,
 optionally with an unsteady spanwise component `W = S2(t)*y`
 (`S2 = A sin(2 pi (t - t0)/T)`, the `S2data.cpl` law) or a Stokes layer
 (an oscillating spanwise profile at mid-box driven by its body force, the
-`SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`), in a
+`SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`),
+optionally with a large-scale damping of the Fourier columns inside an
+ellipse of the shear frame (the `&damping` group, [DAMPING.md](DAMPING.md):
+an enlarged box that keeps the length scale of a small one), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (five-point, fourth-order for `d/dy` and `d2/dy2`, sixth for `d4/dy4`)
@@ -265,7 +268,8 @@ snapshots at 19-29 s each.
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
 | y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
-| safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
+| large-scale damping | merged from `damping_from_main` (DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
+| safety net | `tests/run_tests.sh` (15 runs, three of them the damping Kelvin modes) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
 

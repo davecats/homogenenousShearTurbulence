@@ -18,6 +18,7 @@ module test_common
   use hst_setup
   use hst_derivatives
   use hst_linsolve
+  use hst_damping, only: damping_setup
 
   implicit none
   private
@@ -44,6 +45,7 @@ contains
     call init_fft()
     call init_linsolve()
     call setup_derivatives()
+    call damping_setup()
   end subroutine test_setup
 
   subroutine test_finish(passed)

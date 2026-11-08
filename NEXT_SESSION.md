@@ -2,6 +2,30 @@
 
 Copy the block at the end as the opening message of the next session.
 
+## Session 16 (2026-11-06 to 08): large-scale damping, merged into main
+
+- The branch `damping_from_main` (DAMPING.md) added `src/hst_damping.f90`
+  and the `&damping` deck group: a body force (hard mask or soft rate) on
+  the x-z Fourier columns inside an ellipse of the shear frame, so that a
+  box enlarged n times in x and z keeps the small box's length scale at
+  any shear direction.  Verified with three Kelvin-mode decks (15-deck
+  suite green on CPU and GPU).
+- Campaign `~/Codes/hst/damping_campaign` (not in git; its README is the
+  log): n = 2..5, four angles each, hard mask, plus soft rates 1, 3, 10 at
+  n = 3; all at S t = 1400 on HoreKA (bin/hst-a100, `tools/horeka_group.slurm`,
+  self-contained jobs because the login nodes' Lustre clients wedge).
+  Result (DAMPING.md section 4): the structure (S* 6.2-6.3, -<u_par v>/q2
+  0.16, b_ij, rho_ij) is angle independent within 2 % from n = 3 on and
+  equals the small box at theta = 0; the level (q2, eps at fixed S*)
+  still varies by 8-20 % and follows the number of lattice columns just
+  outside the ellipse (a 1/n effect); soft damping removes 6-17 % of the
+  dissipation and gives a weaker flow: the hard mask is the choice.
+- Open: the n = 10 check at theta = 0 and 45 (one A100 node per run,
+  `tools/horeka_node.slurm`), to see the level spread fall; then the
+  swinging shear with the ellipse following it (DAMPING.md section 1).
+  The branches `feature_honeycomb_from_main` (HONEYCOMB.md) and
+  `feature_rotating_shear` (ROTATING.md) stay unmerged.
+
 ## Where things stand (end of 2026-10-05, session 13)
 
 - **The production run is done** (FINDINGS.md "The production run at

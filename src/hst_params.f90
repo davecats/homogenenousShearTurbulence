@@ -41,6 +41,11 @@ module hst_params
   real(C_DOUBLE), save :: sl_amplitude, sl_period, sl_delta, sl_start
   logical, save :: sl_bodyforce, sl_ramp
   !$omp declare target(ni, S)
+  ! large-scale damping (hst_damping, DAMPING.md): a body force -gdamp(kx, kz) u on the
+  ! columns inside the region r < 1 of the shear frame, r = ((|k_par|/damp_kpar)^p +
+  ! (|k_perp|/damp_kperp)^p)^(1/p), p = damp_norm (2: ellipse).  damp_kpar = 0: off.
+  real(C_DOUBLE), save :: damp_kpar, damp_kperp, damp_rate, damp_edge, damp_norm, damp_angle
+  logical, save :: damp_hard, damp_mean, damp_follow
 
   !------------------------------------------------------- clock and I/O ----
   real(C_DOUBLE), save :: deltat, dt_fixed, cflmax, cfl = 0.0d0   ! dt_fixed: deck value, 0 = from cflmax
@@ -75,6 +80,7 @@ module hst_params
   integer(C_INT), allocatable, save :: inlayer(:)       ! inlayer(0:ny-1): 1 inside the Stokes layer
   real(C_DOUBLE), allocatable, save :: der(:, :, :)     ! der(0:ny-1, 0:3, -2:2), see hst_derivatives
   real(C_DOUBLE), allocatable, save :: k2(:, :)         ! alfa^2+beta^2 (iz, ix)
+  real(C_DOUBLE), allocatable, save :: gdamp(:, :)      ! damping rate of the column (iz, ix); hard mask: 1 = masked
   complex(C_DOUBLE_COMPLEX), allocatable, save :: ialfa(:), ibeta(:)
   integer(C_INT), allocatable, save :: izd(:)           ! z mode -> padded index
   real(C_DOUBLE), save :: dx, dy, dz, factor            ! CFL spacings, 1/(2 nxd nzd)

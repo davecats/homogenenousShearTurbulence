@@ -31,6 +31,7 @@ program hst
   use hst_stats
   use hst_pressure
   use hst_stokes
+  use hst_damping
   use hst_timer
 #ifdef HAVE_CUDA
   use omp_lib
@@ -63,6 +64,7 @@ program hst
   call init_fft()
   call init_linsolve()
   call setup_derivatives()
+  call damping_setup()
   call make_output_dirs()
   call restart_read('Dati.cart.out')
   !$omp target update to(V)
@@ -78,6 +80,8 @@ program hst
   call transform_to_physical()
   call compute_cfl()
   call new_timestep()
+  if (has_terminal .and. damping_active() .and. .not. damp_hard .and. damp_rate*deltat > 1.0d0) &
+    print '(A,F8.3)', '   WARNING: explicit damping with damp_rate*deltat = ', damp_rate*deltat
   ifield = floor(time/dt_field)          ! CPL numbering: fields/field<ifield+1>.fld is the next one
   if (has_terminal) write (*, '(A)') '        time       deltat       cfl         energy           diss' // &
     '           uw/2           vw/2      (CPL Runtimedata columns 10-13)'
@@ -101,6 +105,8 @@ program hst
       call restart_write(trim(fname))
       write (fname, '(A,I0,A)') 'p_fields/pField', ifield, '.fld'
       call write_pressure(trim(fname))
+      write (fname, '(A,I0,A)') 'spectra/exz', ifield, '.dat'
+      call spectrum_write(trim(fname))
       if (has_terminal) print '(A,F8.1,A)', '   velocity and pressure snapshots written in', MPI_Wtime() - t_io, ' s'
     end if
     if (crossed(dt_save)) then

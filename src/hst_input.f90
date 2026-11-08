@@ -21,6 +21,7 @@ contains
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, timing
     namelist /init/ amplitude, seed, kpeak
+    namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -32,6 +33,8 @@ contains
     dt_stat = 0.01d0; dt_field = 10.0d0; dt_save = 10.0d0
     time = 0.0d0; time_from_restart = .false.; timing = .false.
     amplitude = 1.0d-3; seed = 1; kpeak = 4.0d0
+    damp_kpar = 0.0d0; damp_kperp = 0.0d0; damp_rate = 0.0d0; damp_hard = .false.; damp_edge = 0.0d0
+    damp_norm = 2.0d0; damp_mean = .false.; damp_follow = .true.; damp_angle = 0.0d0
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -41,7 +44,12 @@ contains
     read (unit, nml=mesh); rewind (unit)
     read (unit, nml=physics); rewind (unit)
     read (unit, nml=time_control); rewind (unit)
-    read (unit, nml=init)
+    read (unit, nml=init); rewind (unit)
+    read (unit, nml=damping, iostat=ios)        ! optional group: absent (ios < 0) keeps the defaults
+    if (ios > 0) then
+      print *, 'ERROR: cannot read the &damping group of '//trim(filename)
+      error stop 1
+    end if
     close (unit)
     if (transport /= 'auto' .and. transport /= 'mpi' .and. transport /= 'nccl') then
       print *, 'ERROR: transport must be auto, mpi or nccl'
@@ -53,6 +61,14 @@ contains
     end if
     if (sl_amplitude /= 0.0d0 .and. sl_period <= 0.0d0) then
       print *, 'ERROR: sl_period must be positive'
+      error stop 1
+    end if
+    if ((damp_kpar > 0.0d0) .neqv. (damp_kperp > 0.0d0)) then
+      print *, 'ERROR: damp_kpar and damp_kperp must both be positive (damping on) or both zero (off)'
+      error stop 1
+    end if
+    if (damp_norm < 1.0d0 .or. damp_edge < 0.0d0 .or. damp_edge >= 1.0d0 .or. damp_rate < 0.0d0) then
+      print *, 'ERROR: damping needs damp_norm >= 1, 0 <= damp_edge < 1, damp_rate >= 0'
       error stop 1
     end if
 
@@ -98,6 +114,9 @@ contains
     if (sl_amplitude /= 0.0d0) write (*, '(A,F8.4,A,F8.4,A,F8.4,A,F8.4,A,L1,A,L1)') &
       '   Stokes layer: amplitude=', sl_amplitude, '  period=', sl_period, '  delta=', sl_delta, &
       '  start=', sl_start, '  bodyforce=', sl_bodyforce, '  ramp=', sl_ramp
+    if (damp_kpar > 0.0d0) write (*, '(A,F8.4,A,F8.4,A,F6.2,A,L1,A,F8.3,A,F6.3,A,L1,A,L1,A,F8.3)') &
+      '   damping: k_par <', damp_kpar, '  k_perp <', damp_kperp, '  norm=', damp_norm, '  hard=', damp_hard, &
+      '  rate=', damp_rate, '  edge=', damp_edge, '  mean=', damp_mean, '  follow=', damp_follow, '  angle=', damp_angle
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,F10.0,A,L1,A,L1)') '   nstep =', nstep, '   wall_max =', wall_max, '   time_from_restart = ', &
