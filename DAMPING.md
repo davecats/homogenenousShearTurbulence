@@ -195,7 +195,13 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   of the mask.  Conclusion: the hard mask is the right choice; the soft
   rate stays available for the swinging shear should the hard mask prove
   too abrupt when the ellipse turns (phase 4).
+* Phase 4 (2026-11-08): the n = 10 check, theta = 0 and 45 (nx 480, nz
+  240; one A100 node with four ranks per run, tools/horeka_node.slurm in
+  12 h segments, jobs 5231010/5231011), to see whether the level spread
+  falls as 1/n (expected about 8 %); the structure should stay.
 * Tools: tools/analyse.py (angle_dependence.png with the correlation
   coefficients as the bottom row, results.csv), tools/spectrum.py
   (spectra.png in the shear frame), tools/history.py (history.png),
-  tools/soft.py (soft.csv, soft.png: what the damping removes vs rate).
+  tools/soft.py (soft.csv, soft.png: what the damping removes vs rate);
+  analyse.py --only hard --out angle_dependence_hard.png for the
+  hard-mask cases alone.
