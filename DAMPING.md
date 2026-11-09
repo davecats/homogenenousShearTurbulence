@@ -114,6 +114,7 @@ complete, 2026-11-08):
     n5 hard    15  1400  0.116   0.0187  6.22    0.161          0.074  -0.108   0.034  -0.003        0.000
     n5 hard    30  1400  0.107   0.0172  6.23    0.161          0.076  -0.112   0.036  -0.011        0.001
     n5 hard    45  1400  0.114   0.0180  6.32    0.158          0.070  -0.111   0.041  -0.005        0.002
+    n10 hard    0  1400  0.116   0.0185  6.29    0.159          0.071  -0.109   0.037  -0.000       -0.000
     n3 rate 10  0  1400  0.108   0.0166  6.47    0.164          0.074  -0.106   0.032  -0.002        0.000
     n3 rate 10 15  1400  0.115   0.0182  6.31    0.168          0.091  -0.108   0.016  -0.005        0.002
     n3 rate 10 30  1400  0.090   0.0140  6.41    0.166          0.079  -0.117   0.038   0.012        0.000
@@ -164,14 +165,16 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
         3        12   10    2    6      0.119 0.124 0.098 0.117
         4        16   14   12   16      0.121 0.121 0.116 0.126
         5        28   14   10   20      0.127 0.116 0.107 0.114
+        10       70   66   68   70      0.116   -     -   (pending)
 
   q2 follows the count at every n.  At theta = 0 the lattice has modes
   exactly on the ellipse (the axis modes, and for n = 5 also (3,4) and
   (4,3): 12 columns with 8 % of the energy), at a generic angle none;
   the count in the band fluctuates by a factor 2-3 between angles, as
   the number of lattice points in a thin ring does, and its relative
-  scatter falls only like 1/n (n = 10 would bring the level spread to
-  about 8 %).  The structure, which is set by the whole first ring
+  scatter falls like 1/n: at n = 10 the count is 66-70 at the four
+  angles (6 % scatter), so the level spread should fall to a few per
+  cent.  The structure, which is set by the whole first ring
   (1 <= r < 2 holds 57 % of the energy at every n and angle), is
   converged from n = 3 on.
 * Soft damping (n = 3, rates g = 1, 3, 10 in units of S, step edge, four
@@ -202,10 +205,15 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   of the mask.  Conclusion: the hard mask is the right choice; the soft
   rate stays available for the swinging shear should the hard mask prove
   too abrupt when the ellipse turns (phase 4).
-* Phase 4 (2026-11-08): the n = 10 check, theta = 0 and 45 (nx 480, nz
-  240; one A100 node with four ranks per run, tools/horeka_node.slurm in
-  12 h segments, jobs 5231010/5231011), to see whether the level spread
-  falls as 1/n (expected about 8 %); the structure should stay.
+* Phase 4 (2026-11-08/09): the n = 10 check, theta = 0 and 45 (nx 479,
+  nz 240: four x-z pencils need nx + 1 divisible by four; one A100 node
+  with four ranks per run, tools/horeka_node.slurm in self-resubmitting
+  segments, jobs 5231128/5231129), to see whether the level spread falls
+  as 1/n.  theta = 0 is done (242720 steps, 0.112 s/step, 7.5 h on one
+  node; the processes hung on Lustre after the final restart write, so
+  the job ran to its limit): q2 0.116, S* 6.29, -<u_par v>/q2 0.159,
+  b_ij and rho_ij as at n = 3-5, the energy 58 % in 1 <= r < 2 and
+  0.09 % inside the ellipse (161 masked columns).  theta = 45 pending.
 * Tools: tools/analyse.py (angle_dependence.png with the correlation
   coefficients as the bottom row, results.csv), tools/spectrum.py
   (spectra.png in the shear frame), tools/history.py (history.png),
