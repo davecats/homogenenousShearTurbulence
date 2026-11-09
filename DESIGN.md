@@ -7,7 +7,7 @@ reasoning.  What was learned while implementing it is in
 the code departed from this plan:
 
 - The file formats are those of the CPL code (`Dati.cart.out`,
-  `fields/field<n>.fld`, `p_fields/pField<n>.fld`, `Runtimedata` with the
+  `fields/field<n>.fld`, `p_fields/pField<n>.fld`, `statistics/Runtimedata` with the
   CPL columns) and nothing else, so the CPL post-processing reads them
   (section 2 "Output" and the optional writer of section 5 are superseded).
 - The unsteady spanwise shear `S2`, the Stokes layer with its body force
@@ -196,7 +196,7 @@ surprises.
 
 **Output.**  `Runtimedata` (one line per `dt_stat`: `time, deltat, cfl,
 2*tke, dissipation, <uv>, <uu>, <vv>, <ww>`, the same quantities as the CPL
-`Runtimedata` + `variances_runtime.dat`), `Dati.cart.out` restart every
+`Runtimedata` + `variances_runtime.dat`; the fluctuation is the field minus its box mean (the (0,0,0) mode), as in `post/cpl`, README.md), `Dati.cart.out` restart every
 `dt_save`, `Dati.cart.<i>.out` snapshots every `dt_field`, all in the
 channel's MPI-IO stream format with a 12-number header.
 

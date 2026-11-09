@@ -8,9 +8,14 @@ VTK files for ParaView.  Everything is computed per *phase* (see below), which i
 how unsteady runs (oscillating spanwise shear `S2(t)`) are phase-averaged; with one
 phase it is the plain average over all snapshots.
 
-The statistics that `hst` itself writes while running (`Runtimedata`,
-`variances_runtime.dat`) are not produced here; they are read by `post/python/`
-and `post/cpl/meanandvar_utils/`.
+The statistics that `hst` itself writes while running (`statistics/Runtimedata`,
+`statistics/variances_runtime.dat`) are not produced here; they are read by `post/python/`
+and `post/cpl/meanandvar_utils/`.  They use the same spatial averaging
+operator as this program (fluctuation = field minus the box mean, the `(0,0,0)`
+mode, so the y-dependent part of the `(0,0)` column is part of the fluctuation)
+and are the instantaneous kind: a run-time column averaged over the times of
+the snapshots equals the corresponding statistic here for `dn = 1` (up to the
+y quadrature on a stretched grid: trapezoid at run time, `yintegr` here).
 
 ## Reference system
 

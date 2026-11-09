@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import load_config
-from ..io import read_runtimedata, read_text_repaired, read_variances
+from ..io import find_run_file, read_runtimedata, read_text_repaired, read_variances
 
 
 RUNTIME_COLUMNS = (
@@ -49,13 +49,7 @@ VARIANCE_COLUMNS = (
 )
 
 
-def _find_file(run_dir: Path, name: str) -> Path:
-    for candidate in (run_dir / "statistics" / name, run_dir / name):
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        f"could not find {name}; checked {run_dir / 'statistics' / name} and {run_dir / name}"
-    )
+_find_file = find_run_file
 
 
 def _meanandvar(

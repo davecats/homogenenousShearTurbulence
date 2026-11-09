@@ -142,7 +142,25 @@ statistics ASCII files use this solver's (streamwise, shearwise, spanwise)
 = (u, v, w) naming (`x` streamwise, `y` the shear direction carrying `v`,
 `z` spanwise).
 
-- `Runtimedata`: one line per `dt_stat` with the columns
+**Run directory.**  A run directory holds the deck `hst.in` and, if the run
+starts from a field, the restart file (`Dati.cart.in...`, named by
+`restart_file`).  At start-up `hst` creates, if they are not there,
+`fields/`, `p_fields/`, `statistics/` (with `statistics/spectra/`) and `vtks/`
+(`mkdir -p`: existing directories and their contents are left alone).
+The run-time statistics below, `Runtimedata`, `variances_runtime.dat` and, when
+active, `stokes_runtime.dat` and `damping_runtime.dat`, are written to
+`statistics/`, the directory that `post/cpl/` and `postpro` write their
+statistics to as well.  The files are always opened for appending: they are
+never truncated, a restart continues them (with one repeated line at the
+restart time, since the restart's first `outstats` call writes the sample the
+previous run wrote last), and a new run started in a directory that still has
+them adds its lines after the old ones, so remove or rename them to start a
+new series.  `vtks/` is for the VTK files of the post-processors; `hst` itself
+writes nothing there.  Runs made before this layout (2026-11-09) have the files
+in the run directory itself: move them into `statistics/` to continue the
+series with a restart; `post/python` reads both places.
+
+- `statistics/Runtimedata`: one line per `dt_stat` with the columns
   `time meanflowx meanflowy S S2 gamma_x gamma_y deltat cfl energy diss uv vw`.
   All fluctuation quantities are y-averaged (box-mean) values, formed by
   Parseval's theorem along the spectral (streamwise, spanwise) directions and
@@ -152,17 +170,48 @@ statistics ASCII files use this solver's (streamwise, shearwise, spanwise)
   folded in (computed here from the compact derivatives), and `uv = <u v>`,
   `vw = <v w>` are the Reynolds shear stresses (no factor 1/2).
   `meanflowx/meanflowy` remain the box-height integrals of the mean profiles.
-- `variances_runtime.dat`: `time uu vv ww uw`, y-averaged velocity second
+- `statistics/variances_runtime.dat`: `time uu vv ww uw`, y-averaged velocity second
   moments with `v` the shearwise and `w` the spanwise fluctuation:
   `uu = <u u>`, etc., and `uw = <u w>` (the streamwise–spanwise Reynolds
   shear stress).
-- `stokes_runtime.dat` (with a Stokes layer): `time energy_out energy_in
+
+  **Averaging operator.**  A statistic is `<.>` of a fluctuation, and the
+  operator `<.>` is a spatial part followed by a temporal part.  The three kinds
+  of statistics (instantaneous, phase-averaged, time-averaged) differ only in
+  the temporal part; the spatial part is the average over the whole box, so
+  the fluctuation is the field minus its `(0,0,0)` mode (the box mean) and
+  nothing else.  In particular the `(0,0)` column keeps its y-dependent part:
+  the plane-averaged profiles `u00(y) - <u00>_y`, `w00(y) - <w00>_y` are
+  fluctuations like any other mode (`v00` is identically zero).  The columns
+  above are the instantaneous kind, and the post-processor of `post/cpl/`
+  uses the same spatial operator, so a run-time column and the statistic
+  reconstructed from the snapshots differ only by the time or phase average.
+  The box mean of `u` and `w` is constant in time, so removing it per sample
+  equals removing its time or phase mean.  **This operator assumes a flow that is
+  statistically homogeneous in y**, so that the mean is constant in y and the
+  box average is the right spatial average.  A Stokes layer breaks that: the
+  flow is statistically inhomogeneous in y, the spatial average can only be
+  taken along x and z (the plane average, the (0,0) column), and the
+  statistics are then to be read as profiles (one-point, one-time statistics)
+  or, in general, as quantities that depend on y; y-averaged box numbers
+  (`energy`, `uu`, ... and the box sums of `postpro`) are then not statistics of
+  the flow in the usual sense.  The Stokes-layer code path is not part of this
+  definition: with `stokes_active` the whole (0,0) column is simply left out of
+  the run-time statistics and the plane means are removed in `postpro`, a
+  stopgap that keeps the old behaviour and has not been revisited.  The proper
+  treatment for that case (y-resolved profiles at run time, a mean U(y), W(y)
+  removed plane by plane, phase averages of profiles) is future work; it is
+  not covered by the tests.  In homogeneous runs the same operator is used for the column
+  energies of `statistics/spectra/exz<i>.dat`.  (Before 2026-11-09 the whole `(0,0)`
+  column was left out: `uu`, `ww`, `energy` and `diss` were a few percent low,
+  FINDINGS.md "The (0,0) column in the run-time statistics".)
+- `statistics/stokes_runtime.dat` (with a Stokes layer): `time energy_out energy_in
   diss_out diss_in`, y-averaged region means inside and outside the layer
   (`energy_out/in = <u_i u_i>/2`, `diss_out/in = nu <∂_j u_i ∂_j u_i>`).
 - `Dati.cart.out`: restart file, every `dt_save` and at the end.
 - `fields/field<n>.fld`: velocity snapshots every `dt_field`;
-  `p_fields/pField<n>.fld`: the pressure at the same times.  The two
-  directories are created at start-up.
+  `p_fields/pField<n>.fld`: the pressure at the same times;
+  `statistics/spectra/exz<n>.dat`: the column energies averaged since the previous snapshot.
 
 File layout (`src/hst_io.f90`): the CPL text header up to `Vfield=`, then
 the complex128 array `(0..nx, -ny_cpl..ny_cpl, -1..nz_cpl+1)` of `(u, v, w)`
@@ -181,7 +230,7 @@ mpirun -np 4 /path/to/build-cpu/postpro          # reads postpro.in (the copy in
 ```
 
 `postpro.in` names the snapshots (`first`, `last`, `step`), the deck, the
-output directory and what to compute: `mean` (the plane means U, W, P),
+output directory and what to compute: `mean` (the box means U, W, P, constant in y),
 `stresses` (<u_i u_j>(y)), `spectra` (the two-dimensional spectra averaged
 over y and their sums over kx and over kz) and `budgets`, a list of
 components among `uu vv ww uv uw vw` for which the terms of the
@@ -192,7 +241,14 @@ The pressure is recomputed from the velocity, the gradients use the
 compact scheme, the plane averages of products are taken on the dealiased
 grid, and the derivatives of the profiles use the compact stencils; on
 one snapshot every quantity agrees with the CPL tools of `hst-main` to
-their printed precision (FINDINGS.md "Post-processing in Fortran").  The
+their printed precision (FINDINGS.md "Post-processing in Fortran"; that check
+predates the change of the averaging operator below, which those tools do not share).
+The fluctuation is the field minus its box mean, the (0,0,0) mode, of each
+snapshot, the same spatial operator as the run-time statistics and `post/cpl/`
+(see "Averaging operator" under the run-time files above): the y-dependent part
+of the (0,0) column is part of the fluctuation, and the production uses the mean
+shear `S`, `S2(t)` alone.  With a Stokes layer (statistically inhomogeneous in y, so this operator does not apply)
+the old plane-mean behaviour is kept as a stopgap, as at run time.  The
 budgets cost the pressure and nine gradient fields per snapshot; without
 them a snapshot costs one read.
 
@@ -203,7 +259,7 @@ PATH; the copy gets one patch, since `hst-main/postprocess` passes a fifth
 argument to `penta_smw_solve` that its `linsolver_smw.cpl` no longer
 takes) and leaves `statistics/` with the Reynolds stresses and spectra per
 plane, the budgets and the mean profiles.  On a single field its `rms.dat`
-equals the line of `variances_runtime.dat` at that time to 1e-7; over
+equals the line of `statistics/variances_runtime.dat` at that time to 1e-7; over
 several fields it subtracts the squared *time-averaged* mean profile, so
 it differs from the time average of our lines by that variance.  With
 `PRESSURE=cpl` it recomputes the pressure files with `prepare_pressure.cpl`
@@ -332,7 +388,7 @@ src/hst_io.f90           restart and snapshot files
 src/hst_derivatives.f90  compact stencils, shear-periodic ghost rows
 src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly, real factor
 src/hst_equations.f90    the equations and one RK step
-src/hst_stats.f90        Runtimedata
+src/hst_stats.f90        statistics/Runtimedata and the other run-time files
 src/hst_pressure.f90     pressure at snapshot times
 src/hst.f90              main program
 src/postpro/postpro.f90  post-processing: plane statistics, spectra and budgets of the snapshots (postpro.in)

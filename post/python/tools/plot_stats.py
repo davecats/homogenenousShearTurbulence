@@ -4,7 +4,7 @@ Usage::
 
     python3 -m post.python plot_stats [deck] [-o out.png]
 
-Reads ``Runtimedata`` next to the deck and plots energy, dissipation and the
+Reads ``statistics/Runtimedata`` next to the deck (or ``Runtimedata`` of an older run) and plots energy, dissipation and the
 Reynolds stresses against time.  Requires ``matplotlib`` (imported lazily).
 """
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..io import read_runtimedata, read_variances
+from ..io import find_run_file, read_runtimedata, read_variances
 
 
 def run(cfg, argv) -> int:
@@ -25,8 +25,10 @@ def run(cfg, argv) -> int:
                    help="only Runtimedata, skip variances_runtime.dat")
     args = p.parse_args(argv)
 
-    rt_file = cfg.run_dir / "Runtimedata"
-    var_file = cfg.run_dir / "variances_runtime.dat"
+    rt_file = find_run_file(cfg.run_dir, "Runtimedata")
+    var_file = cfg.run_dir / "statistics" / "variances_runtime.dat"
+    if not var_file.is_file():                       # runs made before statistics/ existed
+        var_file = cfg.run_dir / "variances_runtime.dat"
 
     rt = read_runtimedata(rt_file)
     t = rt["time"]

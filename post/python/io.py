@@ -207,6 +207,19 @@ def _loadtxt(path: str | Path):
     return np.atleast_2d(np.loadtxt(read_text_repaired(path).splitlines(), comments="#")).astype(float)
 
 
+def find_run_file(run_dir: str | Path, name: str) -> Path:
+    """A run-time statistics file of a run: ``<run_dir>/statistics/<name>`` (where
+    ``hst`` writes it), else ``<run_dir>/<name>`` (runs made before the
+    ``statistics/`` directory existed)."""
+    run_dir = Path(run_dir)
+    for candidate in (run_dir / "statistics" / name, run_dir / name):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"could not find {name}; checked {run_dir / 'statistics' / name} and {run_dir / name}"
+    )
+
+
 def read_runtimedata(path: str | Path):
     """Read ``Runtimedata``: one line per ``dt_stat``, the 13 columns.
 

@@ -16,7 +16,7 @@ RUNS=${RUNS:-$HOME/hst-runs}
 source $HST_ROOT/env/horeka.sh gpu
 nvidia-smi -L | head -1
 run() {  # run <ranks> <deck> <nstep>
-  d=$RUNS/bench-$2-np$1; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata
+  d=$RUNS/bench-$2-np$1; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata
   sed -e "s/nstep = [0-9]*/nstep = $3/" $HST_ROOT/examples/$2.in > hst.in
   echo "=== $2 on $1 GPU(s), $3 steps"
   mpirun -np $1 --bind-to none $HST_ROOT/build-gpu/hst hst.in | grep -E "step 5:|s/step; writing|rror|nxB|line solver"

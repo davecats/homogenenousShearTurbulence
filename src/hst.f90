@@ -111,7 +111,7 @@ program hst
       call restart_write(trim(fname))
       write (fname, '(A,I0,A)') 'p_fields/pField', ifield, '.fld'
       call write_pressure(trim(fname))
-      write (fname, '(A,I0,A)') 'spectra/exz', ifield, '.dat'
+      write (fname, '(A,I0,A)') 'statistics/spectra/exz', ifield, '.dat'
       call spectrum_write(trim(fname))
       if (has_terminal) print '(A,F8.1,A)', '   velocity and pressure snapshots written in', MPI_Wtime() - t_io, ' s'
     end if

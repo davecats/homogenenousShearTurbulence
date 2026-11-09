@@ -150,7 +150,7 @@ def _parse_namelist(text: str) -> dict[str, dict[str, object]]:
 class Config:
     """Everything a tool needs to know about a run, resolved from a deck."""
 
-    #: directory the deck lives in (where fields/, p_fields/, Runtimedata are)
+    #: directory the deck lives in (where fields/, p_fields/, statistics/ are)
     run_dir: Path
     deck_path: Path
     # mesh

@@ -48,10 +48,15 @@ module hst_io
 
 contains
 
-  ! fields/ and p_fields/ next to the deck, as the CPL code expects; spectra/ for hst_stats.
+  ! The output directories next to the deck (the layout post/cpl expects):
+  !   fields/ p_fields/   velocity and pressure snapshots
+  !   statistics/         the run-time statistics (Runtimedata, variances_runtime.dat, ...)
+  !   statistics/spectra/ the column-energy spectra written with every snapshot (hst_stats)
+  !   vtks/               VTK files (none written by hst itself; post/cpl and the tools use it)
+  ! `mkdir -p` leaves existing directories, and what is in them, untouched.
   subroutine make_output_dirs()
     if (has_terminal) then
-      call execute_command_line('mkdir -p fields p_fields spectra')
+      call execute_command_line('mkdir -p fields p_fields statistics statistics/spectra vtks')
     end if
   end subroutine make_output_dirs
 

@@ -17,12 +17,12 @@ tests/run_tests.sh "$BUILD" "$RANKS"  # second argument: ranks
 # COMPILE AND TEST FOR GPU
 # (single-GPU nodes)
 ##############################
-#source env/istm.sh          	        # istmio2 / istmcetus / istmcorax
-#BUILD=${BUILD:-build-gpu-istmvolans}
-#RANKS=${RANKS:-1}
-#make GPU=1 BUILD="$BUILD" 		    # GPU: nvfortran + cuFFT -> $BUILD/hst
-#make test GPU=1 BUILD="$BUILD"		# the test programs, same build directory
-#tests/run_tests.sh "$BUILD" "$RANKS"  # second argument: ranks
+# source env/istm.sh          	        # istmio2 / istmcetus / istmcorax
+# BUILD=${BUILD:-build-gpu-istmvolans}
+# RANKS=${RANKS:-1}
+# make GPU=1 BUILD="$BUILD" 		    # GPU: nvfortran + cuFFT -> $BUILD/hst
+# make test GPU=1 BUILD="$BUILD"		# the test programs, same build directory
+# tests/run_tests.sh "$BUILD" "$RANKS"  # second argument: ranks
 
 ##############################
 # COMPILE AND TEST FOR GPU

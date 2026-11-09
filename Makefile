@@ -35,7 +35,7 @@ SRC = src/hst_params.f90 \
       src/hst_stats.f90 \
       src/hst_pressure.f90
 
-TESTS = tests/test_roundtrip.f90 tests/test_linsolve.f90 tests/test_kelvin.f90 tests/test_pressure.f90 tests/test_taylorgreen.f90 tests/test_forcing.f90 tests/test_conservation.f90 tests/test_stokes.f90
+TESTS = tests/test_roundtrip.f90 tests/test_linsolve.f90 tests/test_kelvin.f90 tests/test_pressure.f90 tests/test_taylorgreen.f90 tests/test_forcing.f90 tests/test_conservation.f90 tests/test_stokes.f90 tests/test_stats.f90
 
 # The MPI wrapper is chosen here unless FC is given on the command line.
 # (make has a built-in default FC=f77, and compiler modules export FC=nvfortran

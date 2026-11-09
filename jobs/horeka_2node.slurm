@@ -48,7 +48,7 @@ scontrol show hostnames $SLURM_JOB_NODELIST | paste -sd' '
 echo "=== topology of $(hostname)"; nvidia-smi topo -m | head -12; numactl -H | grep -E "available|cpus" | cut -c1-80
 nvidia-smi --query-gpu=name,memory.total --format=csv | head -2
 run() {  # run <ranks> <deck> <nstep> <transport> <bind: none|numa> <npy> [info|lc<N>]
-  d=$RUNS/2node-$2-np$1-npy$6; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata
+  d=$RUNS/2node-$2-np$1-npy$6; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata
   deck=$HST_ROOT/examples/$2.in; [ -f $deck ] || deck=$HST_ROOT/tests/decks/$2.in     # a benchmark or a test deck
   lc=0; case "$7" in lc*) lc=${7#lc};; esac                                             # lc<N>: line_chunk = N
   sed -e "s/nstep = [0-9]*/nstep = $3/" -e "s/time_from_restart = .false./time_from_restart = .false., timing = .true./" \

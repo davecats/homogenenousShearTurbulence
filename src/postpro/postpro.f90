@@ -1,5 +1,5 @@
 !=====================================================================!
-!     postpro: plane statistics of the snapshots of a run             !
+!     postpro: plane statistics of the snapshots of a run (fluctuation = field minus box mean)             !
 !=====================================================================!
 !
 ! Usage:  mpirun -np N postpro [postpro.in]
@@ -14,8 +14,10 @@
 ! into outdir the averages over these snapshots as functions of y, one line
 ! per y point, plain text with a header line:
 !
-!   mean.dat        y  U  W  P        the plane means (the (0,0) mode; the mean
-!                                     shear S*y itself is not included)
+!   mean.dat        y  U  W  P        the mean (the box mean, the (0,0,0) mode, so
+!                                     constant in y; with a Stokes layer the plane
+!                                     means, the (0,0) column; the mean shear S*y
+!                                     itself is not included)
 !   stresses.dat    y  uu vv ww uv uw vw        the Reynolds stresses <u_i u_j>
 !   budget_uu.dat   y  prod diss pstrain ttrsp ptrsp vdiff sum
 !   ... one file per component named in `budgets` (any of uu vv ww uv uw vw;
@@ -35,8 +37,20 @@
 !   spectra_x.dat   kx Euu ... (summed over kz);  spectra_z.dat  kz Euu ... (over kx)
 !
 ! Axes as in the solver: x streamwise, y the shear direction (velocity v),
-! z spanwise (w).  Fluctuations are taken about the plane mean of each
-! snapshot.  The pressure is recomputed from the velocity (hst_pressure),
+! z spanwise (w).  Averaging operator: the fluctuation is the field minus
+! its box mean, the (0,0,0) mode, of each snapshot, so the y-dependent part
+! of the (0,0) column (the plane-averaged profiles u00(y), w00(y), p00(y)) is
+! part of the fluctuation, as in the run-time statistics (hst_stats) and in
+! post/cpl; the mean shear that enters the production is S and S2(t) alone.
+! The box mean is constant in time, so the average over the snapshots is
+! the same as removing the mean over the snapshots.  This presupposes a flow
+! that is statistically homogeneous in y.  A Stokes layer (stokes_active) is
+! not: spatial averaging is then possible along x and z only and the
+! statistics are y-dependent profiles.  That case is not part of the operator
+! above; it keeps the old behaviour as a stopgap (the plane means, the (0,0)
+! column, are removed as in hst_stats, U(y), W(y) are the mean profiles and
+! enter the production) and has not been revisited.
+! The pressure is recomputed from the velocity (hst_pressure),
 ! so p_fields/ is not needed.  Everything else is the solver's: the file
 ! reader, the shear-periodic ghost rows, the compact d/dy, the transforms to
 ! physical space.  The plane averages of products are sums over the
@@ -58,6 +72,7 @@ program hst_postpro
   use hst_transforms
   use hst_io
   use hst_pressure
+  use hst_stokes, only: stokes_active
 
   implicit none
 
@@ -78,6 +93,8 @@ program hst_postpro
   character(len=256) :: arg
   character(len=64) :: fname
   logical :: exists, want_budget(6), any_budget
+  logical :: plane_mean      ! the (0,0) column is the mean (Stokes layer) instead of the box mean alone
+  real(C_DOUBLE) :: box_mean(3)
 
   ! host copies with the layout of V: the fluctuations, the pressure, d/dy
   complex(C_DOUBLE_COMPLEX), allocatable :: Vf(:, :, :, :), p(:, :, :), dVdy(:, :, :, :)
@@ -110,6 +127,7 @@ program hst_postpro
   want_budget = [(index(budgets, NAME(c)) > 0, c=1, 6)]
   any_budget = any(want_budget)
   call read_input(trim(deck))
+  plane_mean = stokes_active()
   time_from_restart = .true.           ! the clock of each snapshot comes from its file
   call setup_decomposition()
   call allocate_fields()
@@ -160,8 +178,7 @@ program hst_postpro
       end do
     end if
 
-    ! plane means (the (0,0) mode, real) of this snapshot and their slopes;
-    ! the fluctuations are everything else
+    ! the (0,0) column (real) of this snapshot: its profiles u00(y), w00(y), p00(y)
     umean = 0
     if (nx0 == 0) then
       do iy = ny0, nyN
@@ -169,14 +186,31 @@ program hst_postpro
       end do
     end if
     call MPI_Allreduce(MPI_IN_PLACE, umean, size(umean), MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-    umean_sum = umean_sum + umean
-    dUdy(:, 1) = S + ddy(umean(:, 1))            ! dU/dy: the mean shear plus the profile's
-    dUdy(:, 2) = 0.0d0
-    dUdy(:, 3) = s2_of(time) + ddy(umean(:, 2))  ! dW/dy
     Vf = V
-    if (nx0 == 0) then
-      Vf(:, 0, 0, :) = 0; p(:, 0, 0) = 0; dVdy(:, 0, 0, :) = 0
+    if (plane_mean) then
+      ! Stokes layer: the plane means are the mean flow, the fluctuations are everything else
+      dUdy(:, 1) = S + ddy(umean(:, 1))          ! dU/dy: the mean shear plus the profile's
+      dUdy(:, 2) = 0.0d0
+      dUdy(:, 3) = s2_of(time) + ddy(umean(:, 2))  ! dW/dy
+      if (nx0 == 0) then
+        Vf(:, 0, 0, :) = 0; p(:, 0, 0) = 0; dVdy(:, 0, 0, :) = 0
+      end if
+    else
+      ! the mean is the box mean (the (0,0,0) mode, dyl-weighted): constant in y, the
+      ! mean shear is S and S2 alone, and the rest of the column is fluctuation
+      ! (v00 = 0; the derivative of the column is that of its fluctuation)
+      do c = 1, 3
+        box_mean(c) = sum(umean(:, c)*dyl)/sum(dyl)
+      end do
+      umean = spread(box_mean, 1, ny)
+      dUdy(:, 1) = S; dUdy(:, 2) = 0.0d0; dUdy(:, 3) = s2_of(time)
+      if (nx0 == 0) then
+        Vf(:, 0, 0, 1) = Vf(:, 0, 0, 1) - box_mean(1)
+        Vf(:, 0, 0, 3) = Vf(:, 0, 0, 3) - box_mean(2)
+        p(:, 0, 0) = p(:, 0, 0) - box_mean(3)
+      end if
     end if
+    umean_sum = umean_sum + umean
 
     call accumulate_spectral()
     if (any_budget) then
@@ -218,7 +252,7 @@ contains
     real(C_DOUBLE) :: w, s
     do ix = nx0, nxN
       do iz = -nz, nz
-        if (ix == 0 .and. iz == 0) cycle
+        if (ix == 0 .and. iz == 0 .and. plane_mean) cycle     ! with the box mean only, the column is fluctuation
         w = 2.0d0; if (ix == 0) w = 1.0d0
         do iy = ny0, nyN
           do ij = 1, 6
@@ -368,7 +402,11 @@ contains
     call execute_command_line('mkdir -p '//trim(outdir))
     if (mean) then
       open (newunit=unit, file=trim(outdir)//'/mean.dat', action='write')
-      write (unit, '(A)') '# y  U  W  P   (plane means; the mean flow S y is not included)'
+      if (plane_mean) then
+        write (unit, '(A)') '# y  U  W  P   (plane means; the mean flow S y is not included)'
+      else
+        write (unit, '(A)') '# y  U  W  P   (box means, constant in y; the mean flow S y is not included)'
+      end if
       do iy = 0, ny - 1
         write (unit, fmt) y(iy), umean_sum(iy, :)
       end do

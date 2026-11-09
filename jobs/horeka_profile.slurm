@@ -23,7 +23,7 @@ source $HST_ROOT/env/horeka.sh gpu
 NSYS=$(which nsys 2>/dev/null || ls $NVHPC_ROOT/compilers/bin/nsys $NVHPC_ROOT/profilers/*/bin/nsys 2>/dev/null | head -1)
 nvidia-smi -L | head -1
 run() {  # run <deck> <nstep> [nsys|transport]
-  d=$RUNS/prof-$1-np$NP; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata prof.*
+  d=$RUNS/prof-$1-np$NP; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata prof.*
   t=${3:-auto}; [ "$t" = nsys ] && t=auto
   sed -e "s/nstep = [0-9]*/nstep = $2/" -e "s/time_from_restart = .false./time_from_restart = .false., timing = .true./" \
       -e "s/&mesh /\&mesh transport = '$t', /" $HST_ROOT/examples/$1.in > hst.in
