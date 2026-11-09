@@ -20,9 +20,13 @@ Copy the block at the end as the opening message of the next session.
   still varies by 8-20 % and follows the number of lattice columns just
   outside the ellipse (a 1/n effect); soft damping removes 6-17 % of the
   dissipation and gives a weaker flow: the hard mask is the choice.
-- Open: the n = 10 check at theta = 0 and 45 (one A100 node per run,
-  `tools/horeka_node.slurm`), to see the level spread fall; then the
-  swinging shear with the ellipse following it (DAMPING.md section 1).
+- The n = 10 check (2026-11-09; one A100 node per run, 7.5 h each,
+  `tools/horeka_node.slurm`, nx = 479 because four pencils need nx + 1
+  divisible by four): q2 0.116 / 0.115 at theta = 0 / 45, S* 6.29 /
+  6.30, b_ij within 0.002: the level spread is 1 % (17 % at n = 5), as
+  the lattice count in the band r < 1.1 predicts (66-70 columns at all
+  angles).  Open: the swinging shear with the ellipse following it
+  (DAMPING.md section 1).
   The branches `feature_honeycomb_from_main` (HONEYCOMB.md) and
   `feature_rotating_shear` (ROTATING.md) stay unmerged.
 
