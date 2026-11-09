@@ -48,10 +48,10 @@ module hst_io
 
 contains
 
-  ! fields/ and p_fields/ next to the deck, as the CPL code expects.
+  ! fields/ and p_fields/ next to the deck, as the CPL code expects; spectra/ for hst_stats.
   subroutine make_output_dirs()
     if (has_terminal) then
-      call execute_command_line('mkdir -p fields p_fields')
+      call execute_command_line('mkdir -p fields p_fields spectra')
     end if
   end subroutine make_output_dirs
 

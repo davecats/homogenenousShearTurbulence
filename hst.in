@@ -58,3 +58,16 @@
   tg_amplitude = 1.0            ! Taylor-Green velocity amplitude
   tg_mode = 1                    ! positive mode number in x, y and z
 /
+
+! Optional large-scale damping (DAMPING.md): a body force -g u on the x-z Fourier columns inside
+! r = ((|k_par|/damp_kpar)^p + (|k_perp|/damp_kperp)^p)^(1/p) < 1 of the shear frame (both semi-axes > 0: on)
+!&damping
+!  damp_kpar = 2.0943951023931953  damp_kperp = 6.283185307179586   ! semi-axes along / across the shear
+!  damp_norm = 2.0                 ! p: 2 = ellipse, large = rectangle; boundary modes (r = 1) are kept
+!  damp_hard = .false.             ! .true.: zero the columns every substep (Galerkin truncation)
+!  damp_rate = 1.0                 ! soft damping rate g inside (explicit: g*deltat < 1)
+!  damp_edge = 0.0                 ! width in r of the smoothstep ramp of g to 0 at r = 1 (0 = step)
+!  damp_mean = .false.             ! damp the (0,0) column (mean profiles) too
+!  damp_follow = .true.            ! the region follows the shear direction atan2(S2(t), S); else damp_angle (deg)
+!  damp_angle = 0.0
+!/

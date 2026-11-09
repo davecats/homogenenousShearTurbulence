@@ -32,6 +32,7 @@ program test_kelvin
   use hst_derivatives
   use hst_linsolve
   use hst_equations
+  use hst_damping, only: damping_active
 
   implicit none
 
@@ -41,7 +42,7 @@ program test_kelvin
   integer(C_INT), parameter :: ix = 1, iz = 1, mky = 1
   complex(C_DOUBLE_COMPLEX), parameter :: v0 = (1.0d0, 0.0d0), eta0 = (0.3d0, -0.2d0)
   real(C_DOUBLE) :: kx, kz, ky0, kh, kh2, k02, kyt, k2t, visc, err_v, err_eta, ratio, t_end
-  real(C_DOUBLE) :: c, tq, k2int, s2c
+  real(C_DOUBLE) :: c, tq, k2int, s2c, gk
   complex(C_DOUBLE_COMPLEX) :: vex, etaex, u0, w0, ph
   logical :: check_eta
 
@@ -98,6 +99,16 @@ program test_kelvin
   else
     etaex = (eta0 + (s2c*I*kx - S*I*kz)*v0*time)*visc
   end if
+  ! large-scale damping of this column: a factor exp(-g t) on both (the
+  ! force -g u is divergence-free, so the pressure is untouched); the hard
+  ! mask leaves zero
+  gk = 0.0d0
+  if (damping_active()) gk = gdamp(iz, ix)
+  if (damp_hard .and. gk > 0.0d0) then
+    vex = 0.0d0; etaex = 0.0d0
+  else
+    vex = vex*exp(-gk*time); etaex = etaex*exp(-gk*time)
+  end if
   err_v = 0; err_eta = 0
   do iy = ny0, nyN
     ph = exp(I*kyt*y(iy))
@@ -105,6 +116,12 @@ program test_kelvin
     err_eta = max(err_eta, abs(I*kz*V(iy, iz, ix, 1) - I*kx*V(iy, iz, ix, 3) - etaex*ph))
   end do
   ratio = maxval(abs(V(:, iz, ix, 2)))/abs(v0)
+  if (damp_hard .and. gk > 0.0d0) then
+    if (has_terminal) write (*, '(A,ES10.2,A,ES10.2)') '   hard-masked Kelvin mode: max |v| = ', err_v, '   max |eta| = ', err_eta
+    call test_finish(err_v <= 1.0d-12 .and. err_eta <= 1.0d-12)
+    stop
+  end if
+  if (has_terminal .and. gk > 0.0d0) write (*, '(A,F8.4)') '   damped column, rate ', gk
   if (has_terminal) then
     write (*, '(A,F8.4,A,I0,A,ES9.2,A,F6.3,A,F6.3)') '   Kelvin mode to t = ', time, ' in ', n, ' steps of ', deltat, &
       '   S = ', S, '  S2(0) = ', s2c

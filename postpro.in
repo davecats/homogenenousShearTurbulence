@@ -1,0 +1,12 @@
+! postpro input (Fortran namelist): which snapshots of a run to average and
+! what to compute.  Run from the directory of the run:  mpirun -np N postpro [postpro.in]
+&postpro
+  first = 1, last = 20, step = 1   ! fields/field<n>.fld for n = first, first+step, ..., last
+  deck = 'hst.in'                  ! the deck of the run
+  outdir = 'statistics'            ! where the files go
+  mean = .true.                    ! mean.dat: plane means U, W, P (without the mean shear S y)
+  stresses = .true.                ! stresses.dat: <u_i u_j>(y)
+  spectra = .true.                 ! spectra_xz.dat (two-dimensional, y-averaged), spectra_x.dat, spectra_z.dat
+  budgets = 'uu vv ww uv uw vw'    ! budget_<ij>.dat for each component listed (prod, diss, pstrain,
+                                   !   ttrsp, ptrsp, vdiff per plane); '' skips the pressure and the gradients
+/

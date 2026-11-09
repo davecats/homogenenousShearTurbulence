@@ -2,6 +2,30 @@
 
 Copy the block at the end as the opening message of the next session.
 
+## Session 16 (2026-11-06 to 08): large-scale damping, merged into main
+
+- The branch `damping_from_main` (DAMPING.md) added `src/hst_damping.f90`
+  and the `&damping` deck group: a body force (hard mask or soft rate) on
+  the x-z Fourier columns inside an ellipse of the shear frame, so that a
+  box enlarged n times in x and z keeps the small box's length scale at
+  any shear direction.  Verified with three Kelvin-mode decks (15-deck
+  suite green on CPU and GPU).
+- Campaign `~/Codes/hst/damping_campaign` (not in git; its README is the
+  log): n = 2..5, four angles each, hard mask, plus soft rates 1, 3, 10 at
+  n = 3; all at S t = 1400 on HoreKA (bin/hst-a100, `tools/horeka_group.slurm`,
+  self-contained jobs because the login nodes' Lustre clients wedge).
+  Result (DAMPING.md section 4): the structure (S* 6.2-6.3, -<u_par v>/q2
+  0.16, b_ij, rho_ij) is angle independent within 2 % from n = 3 on and
+  equals the small box at theta = 0; the level (q2, eps at fixed S*)
+  still varies by 8-20 % and follows the number of lattice columns just
+  outside the ellipse (a 1/n effect); soft damping removes 6-17 % of the
+  dissipation and gives a weaker flow: the hard mask is the choice.
+- Open: the n = 10 check at theta = 0 and 45 (one A100 node per run,
+  `tools/horeka_node.slurm`), to see the level spread fall; then the
+  swinging shear with the ellipse following it (DAMPING.md section 1).
+  The branches `feature_honeycomb_from_main` (HONEYCOMB.md) and
+  `feature_rotating_shear` (ROTATING.md) stay unmerged.
+
 ## Where things stand (end of 2026-10-05, session 13)
 
 - **The production run is done** (FINDINGS.md "The production run at
@@ -31,6 +55,14 @@ Copy the block at the end as the opening message of the next session.
   `~/hst-exp4`, `~/hst-exp5`) can go (`~/hst-y` holds the job outputs
   `hst-2node-517016*.out` that FINDINGS.md "Scaling" cites; copy them to
   `~/hst` first).
+- **The post-processing is now Fortran** (`src/postpro/postpro.f90`, `make
+  postpro`, `postpro.in`; FINDINGS.md "Post-processing in Fortran"):
+  means, stresses, spectra and the six Reynolds-stress budgets per plane,
+  text output, checked against the CPL chain to 5e-11 on one snapshot.
+  Job 5183609 (`accelerated`, one A100 node, 40 min) runs it on the
+  production run's snapshots 6..20 into `<run dir>/statistics_f90/`
+  (`hst-<jobid>.out` in the run directory); the `dev_accelerated` queue
+  was full of the user's jobs.
 - **Pending at the end of the session:** job 5181558
   (`jobs/horeka_postprocess.slurm`, `cpuonly`, 4 ranks, `--mem=230gb`,
   6 h) runs the CPL chain on snapshots 6..20 of the production run
@@ -40,7 +72,11 @@ Copy the block at the end as the opening message of the next session.
 
 ## The task
 
-1. **Read the post-processing** (job 5181558): if it ran, `rms.dat`
+1. **Read the post-processing**: job 5183609 (Fortran, `statistics_f90/`:
+   `stresses.dat` plane averages must give q2 about 0.083 and -uv/q2
+   about 0.136, the box budgets printed at the end of its log should
+   balance to a few per cent over 15 snapshots) and, as the cross-check,
+   the CPL job 5181558: if it ran, `rms.dat`
    (plane averages must give q2 about 0.083 and, in its `uw` column =
    our u v, -uv/q2 about 0.136 over the 15 snapshots), `mean.dat`,
    `spectra.bin`, `uiuj.bin`, `mke.bin` (the budget: production,

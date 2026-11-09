@@ -1,0 +1,6 @@
+! Kelvin mode (1,1) inside the hard mask: must stay zero.
+&mesh  nx = 3, ny = 128, nz = 3, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .true., exact_shift = .true. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 1.0, nstep = 100000, dt_stat = 1.0, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&damping  damp_kpar = 3.1415926535897932, damp_kperp = 9.4247779607693797, damp_hard = .true. /
