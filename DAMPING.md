@@ -115,6 +115,7 @@ complete, 2026-11-08):
     n5 hard    30  1400  0.107   0.0172  6.23    0.161          0.076  -0.112   0.036  -0.011        0.001
     n5 hard    45  1400  0.114   0.0180  6.32    0.158          0.070  -0.111   0.041  -0.005        0.002
     n10 hard    0  1400  0.116   0.0185  6.29    0.159          0.071  -0.109   0.037  -0.000       -0.000
+    n10 hard   45  1400  0.115   0.0183  6.30    0.159          0.072  -0.110   0.039   0.004       -0.001
     n3 rate 10  0  1400  0.108   0.0166  6.47    0.164          0.074  -0.106   0.032  -0.002        0.000
     n3 rate 10 15  1400  0.115   0.0182  6.31    0.168          0.091  -0.108   0.016  -0.005        0.002
     n3 rate 10 30  1400  0.090   0.0140  6.41    0.166          0.079  -0.117   0.038   0.012        0.000
@@ -136,6 +137,7 @@ Spread (max - min)/mean over the angles 0-45:
     n3       4     0.23   0.25   0.02   0.02            0.30   0.10  0.80
     n4       4     0.08   0.11   0.03   0.03            0.20   0.06  0.58
     n5       4     0.17   0.15   0.02   0.02            0.08   0.07  0.20
+    n10      2     0.01   0.01   0.00   0.00            0.00   0.00  0.04
 
 (b_perp is 0.02-0.04 for n >= 3, so its relative spread means little; the
 absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
@@ -165,7 +167,7 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
         3        12   10    2    6      0.119 0.124 0.098 0.117
         4        16   14   12   16      0.121 0.121 0.116 0.126
         5        28   14   10   20      0.127 0.116 0.107 0.114
-        10       70   66   68   70      0.116   -     -   (pending)
+        10       70   66   68   70      0.116   -     -   0.115
 
   q2 follows the count at every n.  At theta = 0 the lattice has modes
   exactly on the ellipse (the axis modes, and for n = 5 also (3,4) and
@@ -173,8 +175,10 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   the count in the band fluctuates by a factor 2-3 between angles, as
   the number of lattice points in a thin ring does, and its relative
   scatter falls like 1/n: at n = 10 the count is 66-70 at the four
-  angles (6 % scatter), so the level spread should fall to a few per
-  cent.  The structure, which is set by the whole first ring
+  angles (6 % scatter), and the two n = 10 runs confirm it: q2 0.116 at
+  theta = 0 and 0.115 at 45 (spread 1 %, against 17 % at n = 5 and 18 %
+  for the small box over the same range).  The structure, which is set
+  by the whole first ring
   (1 <= r < 2 holds 57 % of the energy at every n and angle), is
   converged from n = 3 on.
 * Soft damping (n = 3, rates g = 1, 3, 10 in units of S, step edge, four
@@ -213,7 +217,12 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   node; the processes hung on Lustre after the final restart write, so
   the job ran to its limit): q2 0.116, S* 6.29, -<u_par v>/q2 0.159,
   b_ij and rho_ij as at n = 3-5, the energy 58 % in 1 <= r < 2 and
-  0.09 % inside the ellipse (161 masked columns).  theta = 45 pending.
+  0.09 % inside the ellipse (161 masked columns).  theta = 45 (7.6 h,
+  exited cleanly): q2 0.115, S* 6.30, -<u_par v>/q2 0.159, b_ij within
+  0.002 of theta = 0, rho_par,perp 0.004.  At n = 10 the level spread
+  over the two angles is 1 %, the block error: the angle dependence is
+  gone.  Cost of one n = 10 run: 7.5 node hours (four A100), against
+  1.6 GPU hours at n = 3.
 * Tools: tools/analyse.py (angle_dependence.png with the correlation
   coefficients as the bottom row, results.csv), tools/spectrum.py
   (spectra.png in the shear frame), tools/history.py (history.png),
