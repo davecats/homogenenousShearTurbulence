@@ -37,7 +37,7 @@ module hst_io
   use mpi_f08
   use hst_params
   use hst_initial, only: generate_initial_field
-  use hst_derivatives, only: s2_of, gamma_y_of
+  use hst_derivatives, only: s2_of, gamma_y_of, fill_ghosts
 
   implicit none
   private
@@ -48,26 +48,37 @@ module hst_io
 
 contains
 
-  ! fields/ and p_fields/ next to the deck, as the CPL code expects; spectra/ for hst_stats.
+  ! The output directories next to the deck (the layout post/cpl expects):
+  !   fields/ p_fields/   velocity and pressure snapshots
+  !   statistics/         the run-time statistics (Runtimedata, variances_runtime.dat, ...)
+  !   statistics/spectra/ the column-energy spectra written with every snapshot (hst_stats)
+  !   vtks/               VTK files (none written by hst itself; post/cpl and the tools use it)
+  ! `mkdir -p` leaves existing directories, and what is in them, untouched.
   subroutine make_output_dirs()
     if (has_terminal) then
-      call execute_command_line('mkdir -p fields p_fields spectra')
+      call execute_command_line('mkdir -p fields p_fields statistics statistics/spectra vtks')
     end if
   end subroutine make_output_dirs
 
   ! Reads filename into V, or generates the initial field when it is absent.
-  ! With time_from_restart the clock is taken from the file.
+  ! With time_from_restart the clock is taken from the file.  A restart may
+  ! have a different resolution when restart_remap='mode_index': x and z are
+  ! Fourier indices, so only modes present in both fields are copied; y is
+  ! resampled by nearest neighbour in physical space.  The source CPL field
+  ! is read only for the x slab needed by this rank.
   subroutine restart_read(filename)
     character(len=*), intent(in) :: filename
     integer :: io, ierr, unit, p
     character(len=4096) :: head
-    integer(C_INT) :: r_nx, r_ny, r_nz
+    integer(C_INT) :: r_nx, r_ny, r_nz, source_ny
     real(C_DOUBLE) :: r_alfa0, r_beta0, r_re, r_time, r_S
     integer(MPI_OFFSET_KIND) :: disp
     type(MPI_File) :: fh
     type(MPI_Datatype) :: view
     complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :, :)
-    integer(C_INT) :: ix, iy, iz
+    integer(C_INT) :: ix, iy, iz, src_iy
+    integer :: sx0, sx1, sxB, source_zB
+    real(C_DOUBLE) :: source_dy, target_y
 
     open (newunit=unit, file=trim(filename), access='stream', status='old', action='read', iostat=io)
     if (io /= 0) then
@@ -93,36 +104,119 @@ contains
     p = index(head, 'time='//LF); read (unit, pos=p + 6) r_time
     p = index(head, LF//'S='//LF); read (unit, pos=p + 4) r_S
     close (unit)
-    if (r_nx /= nx .or. r_ny /= nz .or. r_nz /= ny + 1) then
-      if (has_terminal) then
-        print *, 'ERROR: mesh in '//trim(filename)//' does not match the deck'
-        print *, '   file (CPL names nx ny nz): ', r_nx, r_ny, r_nz
-        print *, '   deck (nx, nz, ny+1):       ', nx, nz, ny + 1
-      end if
+    source_ny = r_nz - 1
+    if (r_nx < 0 .or. r_ny < 0 .or. source_ny < 1) then
+      if (has_terminal) print *, 'ERROR: invalid mesh dimensions in '//trim(filename)
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end if
-    if (has_terminal .and. (abs(r_alfa0 - alfa0) > 1.0d-4*alfa0 .or. abs(r_beta0 - beta0) > 1.0d-4*beta0)) &
-      print *, '   note: alpha0/beta0 in the file differ from the deck:', r_alfa0, r_beta0
+    if (has_terminal .and. (r_nx /= nx .or. r_ny /= nz .or. source_ny /= ny)) then
+      print *, '   interpolating restart mesh: file (nx, nz, ny) = ', r_nx, r_ny, source_ny
+      print *, '                              deck (nx, nz, ny) = ', nx, nz, ny
+    end if
+    if (abs(r_alfa0 - alfa0) > 1.0d-4*max(abs(alfa0), 1.0d0) .or. &
+        abs(r_beta0 - beta0) > 1.0d-4*max(abs(beta0), 1.0d0)) then
+      if (trim(restart_remap) == 'mode_index') then
+        if (has_terminal) print *, '   restart_remap=mode_index: remapping signed Fourier indices and projecting on target wavenumbers'
+      else
+      if (has_terminal) print *, 'ERROR: restart alpha0/beta0 do not match the deck:', r_alfa0, r_beta0, alfa0, beta0
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      end if
+    end if
     if (has_terminal .and. (abs(r_re - re) > 1.0d-9*re .or. r_S /= S)) &
       print *, '   note: Re or S differ from the file (', r_re, r_S, ')'
     if (time_from_restart) time = r_time
 
-    allocate (buf(3, ny0:nyN, -nz:nz, nx0:nxN))
-    view = cpl_view(3, ny0, nyN)
+    ! The source file stores x=0..r_nx, z=-r_ny..r_ny and interior shear
+    ! rows 0..source_ny-1 at file rows 2..r_nz.  Read the intersection of
+    ! this rank's x slab and the source x range.  The other ranks still join
+    ! the collective read with a zero-length operation.
+    sx0 = max(int(nx0), 0)
+    sx1 = min(int(nxN), int(r_nx))
+    sxB = max(0, sx1 - sx0 + 1)
+    source_zB = 2*int(r_ny) + 1
     call MPI_File_open(MPI_COMM_WORLD, trim(filename), MPI_MODE_RDONLY, MPI_INFO_NULL, fh, ierr)
-    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
-    call MPI_File_read_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+    if (sxB > 0) then
+      allocate (buf(3, 0:source_ny-1, -r_ny:r_ny, sx0:sx1))
+      call MPI_Type_create_subarray(4, [3, int(r_nz)+3, source_zB, int(r_nx)+1], &
+                                    [3, int(source_ny), source_zB, sxB], [0, 2, 0, sx0], &
+                                    MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, view, ierr)
+      call MPI_Type_commit(view, ierr)
+      call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
+      call MPI_File_read_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+      call MPI_Type_free(view, ierr)
+    else
+      allocate (buf(3, 1, 1, 1))
+      call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, MPI_DOUBLE_COMPLEX, 'native', MPI_INFO_NULL, ierr)
+      call MPI_File_read_all(fh, buf, 0, MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+    end if
     call MPI_File_close(fh, ierr)
-    call MPI_Type_free(view, ierr)
+
+    ! The old CPL shear grid is uniform, irrespective of the target grid's
+    ! optional stretching.  Use coordinates, not a ratio of array indices,
+    ! and wrap the endpoint periodically before selecting the nearest row.
+    source_dy = ly/real(source_ny, C_DOUBLE)
     do ix = nx0, nxN
-      do iz = -nz, nz
+      if (ix < sx0 .or. ix > sx1) cycle
+      do iz = max(-nz, -r_ny), min(nz, r_ny)
         do iy = ny0, nyN
-          V(iy, iz, ix, CPL_ORDER) = buf(:, iy, iz, ix)
+          target_y = modulo(y(iy), ly)
+          src_iy = nint(target_y/source_dy)
+          if (src_iy == source_ny) src_iy = 0
+          V(iy, iz, ix, CPL_ORDER) = buf(:, src_iy, iz, ix)
         end do
       end do
     end do
     deallocate (buf)
+    if (trim(restart_remap) == 'mode_index') then
+      ! The host copy is now complete.  Ghost rows must be made with the
+      ! target wavenumbers before the discrete divergence is evaluated.
+      !$omp target update to(V)
+      call fill_ghosts(1, 3)
+      call fill_ghosts(2)
+      call project_restart()
+    end if
   end subroutine restart_read
+
+  ! Enforce the target-grid discrete divergence constraint after a mode-index
+  ! remap.  In the D0-weighted compact scheme the constraint is
+  !   i*alfa*u + D1*v + i*beta*w = 0.
+  ! For each mode we change only one component, avoiding a singular division
+  ! at (alfa,beta)=(0,0).  This is intentionally a remap repair, not a general
+  ! pressure projection: the source field is already close to divergence free.
+  subroutine project_restart()
+    integer(C_INT) :: ix, iz, iy, j
+    complex(C_DOUBLE_COMPLEX) :: div, du, dv, dw
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(V, der, ialfa, ibeta, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iz, iy, j, div, du, dv, dw)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        do iy = ny0, nyN
+          dv = 0.0d0
+          du = 0.0d0
+          dw = 0.0d0
+          do j = -2, 2
+            du = du + der(iy, 0, j)*V(iy + j, iz, ix, 1)
+            dv = dv + der(iy, 1, j)*V(iy + j, iz, ix, 2)
+            dw = dw + der(iy, 0, j)*V(iy + j, iz, ix, 3)
+          end do
+          if (ix /= 0) then
+            div = dv + ibeta(iz)*dw + ialfa(ix)*du
+            V(iy, iz, ix, 1) = V(iy, iz, ix, 1) - div/ialfa(ix)
+          else if (iz /= 0) then
+            div = dv + ibeta(iz)*dw
+            V(iy, iz, ix, 3) = V(iy, iz, ix, 3) - div/ibeta(iz)
+          else
+            ! At the mean mode incompressibility only requires D1*v=0.
+            V(iy, iz, ix, 2) = 0.0d0
+          end if
+        end do
+      end do
+    end do
+    !$omp target update from(V)
+    call fill_ghosts(1, 3)
+    call fill_ghosts(2)
+  end subroutine project_restart
 
   ! Number after `key` in the text header.
   real(C_DOUBLE) function header_value(head, key)

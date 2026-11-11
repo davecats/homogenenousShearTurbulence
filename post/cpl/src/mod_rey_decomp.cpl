@@ -1,0 +1,53 @@
+! Types
+MEANFIELDS = STRUCTURED ARRAY(Um, Vm, Wm, Pm) OF REAL
+! Variables in memory
+ARRAY(-2..ny+1) OF MEANFIELDS mean_fld_prof=0
+ARRAY(1..dn)   OF MEANFIELDS mean_fld_phase=0, mean_fld_phase_chunk=0
+ARRAY(1..dn)   OF REAL       S2_m_phase=0, S2_m_phase_chunk=0
+REAL S2_f
+
+SUBROUTINE accum_means()
+    WITH V(0,0,*),mean_fld_prof(*):
+        Um = u.REAL
+        Vm = v.REAL
+        Wm = w.REAL
+        Pm = pressure(0,0,*).REAL
+    END WITH
+    ! Periodic b.c. for means (stat. homogeneity)
+    mean_fld_prof(ny  ) = mean_fld_prof(0)
+    mean_fld_prof(ny+1) = mean_fld_prof(1)
+    mean_fld_prof(-1  ) = mean_fld_prof(ny-1)
+    mean_fld_prof(-2  ) = mean_fld_prof(ny-2)
+    ! Integrate over y and accumulate over fields
+    LOOP FOR ALL i
+        mean_fld_phase_chunk(phase_num, i) = ~+ yintegr(mean_fld_prof(*, i))/Ly_ext
+    REPEAT LOOP
+    ! Accumulate phase-avg. S2
+    S2_m_phase_chunk(phase_num) = ~+ S2
+END accum_means
+
+SUBROUTINE mpi_comm_means()
+    LOOP FOR np = 1 TO dn
+        ! MPI sum (mean values available only to process with rank=0)
+        DO MPI_Reduce(mean_fld_phase_chunk(np, i), mean_fld_phase(np, i), 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD) FOR ALL i
+        MPI_Reduce(S2_m_phase_chunk(np), S2_m_phase(np), 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        ! divide by nftot
+        IF rank=0 THEN
+            DO mean_fld_phase(np, i) = ~/ nf_vec(np) FOR ALL i
+            S2_m_phase(np) = ~/ nf_vec(np)
+        END IF
+        ! MPI communication (mean values available to all processes, for Reynolds decomposition)
+        DO MPI_Bcast(mean_fld_phase(np, i), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD) FOR ALL i
+        MPI_Bcast(S2_m_phase(np), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD)
+    REPEAT
+END mpi_comm_means
+
+SUBROUTINE apply_rey_decomp()
+    S2_f = S2 - S2_m_phase(phase_num)
+    LOOP FOR iy = 0 TO ny-1 WITH mean_fld_phase(phase_num), V(0,0,iy)
+        u.REAL           = ~- Um
+        v.REAL           = ~- Vm
+        w.REAL           = ~- Wm
+        pressure(0,0,iy) = ~- Pm
+    REPEAT LOOP
+END apply_rey_decomp

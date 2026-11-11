@@ -1,0 +1,162 @@
+! Disable floating-point traps before any USEd module is initialized.  CPL
+! emits module-level initialization (notably ydiscret's mesh construction)
+! before the executable statements in convenience_postprocess.cpl.  Some MPI
+! environments inherit enabled traps, so disabling them there is too late.
+#include <fenv.h>
+#link "-lmpi"
+fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+
+! run-time bounds checking (high impact on performance)
+! USE rtchecks
+
+! compile-time flags (physics- and numerics-related options)
+USE src/flags
+
+! the budget and the pressure-strain spectra need the pressure and the velocity gradient
+#ifdef compute_budget
+    #define need_pressure_gradient
+#endif
+#ifdef compute_pstrain_spectra
+    #ifndef need_pressure_gradient
+        #define need_pressure_gradient
+    #endif
+#endif
+
+! standard cpl modules
+USE complex
+USE rbmat
+USE cbmat
+USE fft
+
+! program modules
+USE src/readinput
+USE src/linsolver_smw
+USE src/ydiscret
+USE src/convenience_postprocess
+USE src/hstfieldio
+USE src/io_postprocess
+USE src/mod_rey_decomp
+#ifdef compute_pressure
+    USE src/poisson
+#endif
+#ifdef compute_variances
+    USE src/mod_compute_variances
+#endif
+#ifdef compute_budget
+    USE src/mod_compute_budget
+#endif
+#ifdef compute_spectra
+    USE src/mod_compute_spectra
+#endif
+#ifdef compute_pstrain_spectra
+    USE src/mod_compute_pstrain_spectra
+#endif
+#ifdef convert_to_vtk
+    USE src/mod_fld2vtk
+#endif
+
+#ifdef compute_pressure
+    LOOP FOR nf = nstart TO nend
+        ! Phase info
+        phase_num = [(nf-1) MOD dn] + 1
+        phase_pos = [(nf-1) DIV dn] + 1
+        ! Read velocity field
+        vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+        read_vel_field(vel_fld_name)
+        WRITE "PRESS: reading " vel_fld_name " at time=" time " ..."
+        ! Compute velocity gradient
+        velocity_gradient(Vder)
+        ! Update periodic boundary condition for Vder
+        DO pbc(Vder(ix,iz,*,i)) FOR ALL ix,iz,i
+        ! Compute pressure
+        compute_pressure(Vder)
+        ! Update periodic boundary condition for pressure
+        DO pbc(pressure(ix,iz,*)) FOR ALL ix,iz
+        ! Save pressure field
+        pfield_name = WRITE(path_to_pfields'pField'nf'.fld')
+        pressuredata = CREATE(pfield_name)
+            pressuredata(*,*,*)=pressure(*,*,*)
+        CLOSE(pressuredata)
+    REPEAT LOOP
+    MPI_Barrier(MPI_COMM_WORLD)
+#endif
+
+LOOP FOR nf = nstart TO nend
+    ! Phase info
+    phase_num = [(nf-1) MOD dn] + 1
+    phase_pos = [(nf-1) DIV dn] + 1
+    ! Read velocity field
+    vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+    read_vel_field(vel_fld_name)
+    WRITE "MEAN: reading " vel_fld_name " at time=" time " ..."
+    ! Read pressure field
+    press_fld_name = WRITE(path_to_pfields'pField'nf'.fld')
+    read_press_field(press_fld_name)
+    ! Accumulate mean values
+    accum_means()
+    #ifdef convert_to_vtk
+        ! convert *.fld to *.vtk (Paraview-compatible)
+        vtk_name = WRITE(path_to_vtks"field"nf".vtk")
+        WRITE vel_fld_name" --> "vtk_name
+        fld2vtk()
+    #endif
+REPEAT LOOP
+mpi_comm_means()
+MPI_Barrier(MPI_COMM_WORLD)
+
+LOOP FOR nf = nstart TO nend
+    ! Phase info
+    phase_num = [(nf-1) MOD dn] + 1
+    phase_pos = [(nf-1) DIV dn] + 1
+    ! Read velocity field
+    vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+    read_vel_field(vel_fld_name)
+    WRITE "VAR: reading " vel_fld_name " at time=" time " ..."
+    #ifdef need_pressure_gradient
+        ! Read pressure field
+        press_fld_name = WRITE(path_to_pfields'pField'nf'.fld')
+        read_press_field(press_fld_name)
+    #endif
+    ! Compute fluctuating fields
+    apply_rey_decomp()
+    #ifdef compute_variances
+        ! Accumulate mean velocities and velocity variances
+        accum_variances()
+    #endif
+    #ifdef compute_spectra
+        ! Accumulate velocity spectra
+        accum_spectra()
+    #endif
+    #ifdef need_pressure_gradient
+        ! Compute derivatives
+        velocity_gradient(Vder)
+        ! Update periodic boundary condition for Vder
+        DO pbc(Vder(ix,iz,*,i)) FOR ALL ix,iz,i
+    #endif
+    #ifdef compute_budget
+        ! Accumulate budget terms
+        accum_budget()
+    #endif
+    #ifdef compute_pstrain_spectra
+        ! Accumulate pressure-strain spectra
+        accum_pstrain_spectra()
+    #endif
+REPEAT LOOP
+
+#ifdef compute_variances
+    mpi_comm_variances()
+    write_variances()
+#endif
+#ifdef compute_budget
+    mpi_comm_budget()
+    write_budget()
+#endif
+#ifdef compute_spectra
+    write_spectra()
+#endif
+#ifdef compute_pstrain_spectra
+    write_pstrain_spectra()
+#endif
+
+MPI_Finalize()
+STOP

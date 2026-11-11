@@ -24,7 +24,7 @@ source $A_ROOT/env/horeka.sh gpu
 NSYS=$(which nsys 2>/dev/null || ls $NVHPC_ROOT/compilers/bin/nsys $NVHPC_ROOT/profilers/*/bin/nsys 2>/dev/null | head -1)
 nvidia-smi -L | head -1
 run() {  # run <root> <ranks> <deck> <nstep> [nsys]
-  d=$RUNS/ab-$3-np$2; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata prof.*
+  d=$RUNS/ab-$3-np$2; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata prof.*
   sed -e "s/nstep = [0-9]*/nstep = $4/" -e "s/time_from_restart = .false./time_from_restart = .false., timing = .true./" $1/examples/$3.in > hst.in
   echo "=== $(basename $1): $3 on $2 GPU(s), $4 steps $5"
   if [ "$5" = nsys ]; then

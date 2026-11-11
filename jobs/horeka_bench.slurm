@@ -15,7 +15,7 @@ HST_ROOT=${HST_ROOT:-$HOME/hst}
 source $HST_ROOT/env/horeka.sh gpu
 nvidia-smi -L | head -1
 run() {  # run <ranks> <deck>
-  d=$HOME/hst-runs/bench-$2-np$1; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata
+  d=$HOME/hst-runs/bench-$2-np$1; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata
   cp $HST_ROOT/examples/$2.in hst.in
   echo "=== $2 on $1 GPU(s)"
   mpirun -np $1 --bind-to none $HST_ROOT/build-gpu/hst hst.in | grep -E "step|end of run|rror|nxB"

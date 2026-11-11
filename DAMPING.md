@@ -60,11 +60,11 @@ semi-axes of a small box its own modes are the first ones kept.
 * `hst_equations`: soft damping as the explicit terms `-g d2v`, `-g eta`
   (mean column `-g (u, w)`) next to the tilting term; the hard mask after
   the nonlinear terms of every substep.
-* `hst_stats`: `damping_runtime.dat` (time, direction in degrees, number
+* `hst_stats`: `statistics/damping_runtime.dat` (time, direction in degrees, number
   of damped columns, energy in them, power 2 g <u.u> removed; zero for the
   hard mask, which removes no power: it is a Galerkin truncation and the
   resolved modes keep the ordinary budget production = dissipation +
-  dE/dt).  `spectra/exz<i>.dat` with every field snapshot: the column
+  dE/dt).  `statistics/spectra/exz<i>.dat` with every field snapshot: the column
   energies E(kx, kz) averaged over the dt_stat samples since the previous
   snapshot (all runs, damped or not), to see where the energy sits.
 
@@ -83,6 +83,13 @@ the 3:2:1 box enlarged n = 2, 3 times (nx 96/144, nz 48/72, ny 95,
 Re 1000, |S| = 1, direction theta, ellipse (2 pi/3, 2 pi) following the
 shear, random start with amplitude 0.003/n) to be compared with the
 honeycomb rect runs (n = 1).  Phase 1: hard mask, theta = 0 and 45.
+
+Note (2026-11-09): the run-time statistics of these runs (q2, eps, b_ij from
+`statistics/Runtimedata`, `statistics/variances_runtime.dat`) were written with the old averaging
+operator, which left the whole (0,0) column out of the fluctuation instead of
+only the box mean; q2 is low by the share of the column (about 1-2 % of the
+energy, more of uu and ww), the same for all n and angles.  New runs use the
+box-mean operator (FINDINGS.md "The (0,0) column in the run-time statistics").
 
 Results so far (2026-11-07; averages after t = 400 in the frame of the
 shear, errors from 50-unit blocks; t = length of the run; all 20 runs
@@ -153,7 +160,7 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   the block errors are 1 %).  The level is a lattice-counting effect:
   the energy per column is largest just outside the ellipse, and the
   number of lattice columns in the innermost band r < 1.1 depends on
-  the angle (counted from spectra/exz*.dat, columns of both signs):
+  the angle (counted from statistics/spectra/exz*.dat, columns of both signs):
 
         n   theta 0   15   30   45      q2 0 / 15 / 30 / 45
         2         4    4    0    0      0.126 0.122 0.103 0.082

@@ -79,18 +79,18 @@ contains
   end function solve5
 
   !------------------------------------------------- unsteady spanwise shear ----
-  ! S2(t) as in S2data.cpl: zero before s2_start, then s2_amplitude times
-  ! sin(omega (t - s2_start)) with omega = 2 pi / s2_period, or constant
-  ! when s2_period = 0.
+  ! S2(t) as in S2data.cpl, plus a mean: zero before s2_start, then
+  ! s2_mean + s2_amplitude sin(omega (t - s2_start)) with omega = 2 pi / s2_period,
+  ! or the constant s2_mean + s2_amplitude when s2_period = 0.
   real(C_DOUBLE) function s2_of(t)
     real(C_DOUBLE), intent(in) :: t
     real(C_DOUBLE), parameter :: TWOPI = 6.283185307179586d0
     s2_of = 0.0d0
-    if (s2_amplitude == 0.0d0 .or. t < s2_start) return
+    if ((s2_amplitude == 0.0d0 .and. s2_mean == 0.0d0) .or. t < s2_start) return
     if (s2_period > 0.0d0) then
-      s2_of = s2_amplitude*sin(TWOPI/s2_period*(t - s2_start))
+      s2_of = s2_mean + s2_amplitude*sin(TWOPI/s2_period*(t - s2_start))
     else
-      s2_of = s2_amplitude
+      s2_of = s2_mean + s2_amplitude
     end if
   end function s2_of
 
@@ -100,13 +100,14 @@ contains
     real(C_DOUBLE), parameter :: TWOPI = 6.283185307179586d0
     real(C_DOUBLE) :: a, b, omega
     s2_integral = 0.0d0
-    if (s2_amplitude == 0.0d0 .or. t2 <= s2_start) return
+    if ((s2_amplitude == 0.0d0 .and. s2_mean == 0.0d0) .or. t2 <= s2_start) return
     a = max(t1, s2_start); b = t2
     if (s2_period > 0.0d0) then
       omega = TWOPI/s2_period
-      s2_integral = s2_amplitude/omega*(cos(omega*(a - s2_start)) - cos(omega*(b - s2_start)))
+      s2_integral = s2_mean*(b - a) &
+                    + s2_amplitude/omega*(cos(omega*(a - s2_start)) - cos(omega*(b - s2_start)))
     else
-      s2_integral = s2_amplitude*(b - a)
+      s2_integral = (s2_mean + s2_amplitude)*(b - a)
     end if
   end function s2_integral
 

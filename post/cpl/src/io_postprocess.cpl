@@ -1,0 +1,41 @@
+IF rank=0 THEN
+    WRITE ""
+    WRITE "---------------------------------------------------------------------------------------"
+    WRITE "POSTPROCESS DATA:"
+    WRITE BY NAME path_name
+    WRITE BY NAME nfmin, nfmax, dn
+    WRITE BY NAME ly
+    #ifdef compute_pressure
+        WRITE "computing pressure field"
+    #endif
+    WRITE ""
+    WRITE "STATISTICS:"
+    #ifdef compute_variances
+        WRITE "Reynolds stresses"
+    #endif
+    #ifdef compute_budget
+        WRITE "budgets"
+    #endif
+    #ifdef compute_spectra
+        WRITE "velocity spectra"
+    #endif
+    #ifdef compute_pstrain_spectra
+        WRITE "pressure-strain spectra"
+    #endif
+    WRITE "---------------------------------------------------------------------------------------"
+    WRITE ""
+END IF
+
+SUBROUTINE read_vel_field(STRING fld_name)
+    data = OPENRO(fld_name)
+        read_field_header()
+        read_restart_scalars()
+        read_velocity_payload()
+    CLOSE data
+END read_vel_field
+
+SUBROUTINE read_press_field(STRING fld_name)
+    pressuredata = OPEN(fld_name)
+        pressure=pressuredata
+    CLOSE(pressuredata)
+END read_press_field

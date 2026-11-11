@@ -31,8 +31,12 @@ contains
     complex(C_DOUBLE_COMPLEX) :: a(3), u(3), ph
     complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
 
+    if (trim(initial_condition) == 'taylor_green') then
+      call generate_taylor_green()
+      return
+    end if
     if (has_terminal) write (*, '(A,I0,A,F6.2,A,ES9.2)') &
-      '   generating initial field: seed = ', seed, '  kpeak = ', kpeak, '  amplitude = ', amplitude
+      '   generating random initial field: seed = ', seed, '  kpeak = ', kpeak, '  amplitude = ', amplitude
     V = 0
     mmax = ny/3
     do ix = nx0, nxN
@@ -61,6 +65,47 @@ contains
       end do
     end do
   end subroutine generate_initial_field
+
+  ! Three-dimensional Taylor--Green vortex, represented in the x/z Fourier
+  ! planes and in physical y:
+  !   u = A sin(kx*x) cos(ky*y) cos(kz*z)
+  !   v =-A cos(kx*x) sin(ky*y) cos(kz*z),  w = 0.
+  ! The standard vortex requires kx = ky = kz; tg_mode selects the same
+  ! positive mode in all three periodic directions.  This is an exact,
+  ! divergence-free initial field when the box fundamentals are equal.
+  subroutine generate_taylor_green()
+    real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
+    real(C_DOUBLE) :: kx, ky, kz, tol
+    integer(C_INT) :: ix, iz, iy
+    complex(C_DOUBLE_COMPLEX), parameter :: I = (0.0d0, 1.0d0)
+
+    kx = alfa0*tg_mode
+    ky = 2.0d0*PI*tg_mode/ly
+    kz = beta0*tg_mode
+    tol = 1.0d-12*max(1.0d0, max(abs(kx), max(abs(ky), abs(kz))))
+    if (tg_mode > nx .or. tg_mode > nz) then
+      if (has_terminal) print *, 'ERROR: tg_mode must not exceed nx or nz'
+      error stop 1
+    end if
+    if (abs(kx-ky) > tol .or. abs(kx-kz) > tol) then
+      if (has_terminal) print *, 'ERROR: Taylor-Green requires alfa0 = beta0 = 2*pi/ly'
+      error stop 1
+    end if
+    if (has_terminal) write (*, '(A,ES10.3,A,I0,A,F8.3)') &
+      '   generating Taylor-Green vortex: amplitude = ', tg_amplitude, &
+      '  mode = ', tg_mode, '  k = ', kx
+
+    V = 0
+    ix = tg_mode
+    if (nx0 <= ix .and. ix <= nxN) then
+      do iz = -tg_mode, tg_mode, 2*tg_mode
+        do iy = ny0 - 2, nyN + 2
+          V(iy, iz, ix, 1) = -I*tg_amplitude*cos(ky*y(iy))/4.0d0
+          V(iy, iz, ix, 2) = -tg_amplitude*sin(ky*y(iy))/4.0d0
+        end do
+      end do
+    end if
+  end subroutine generate_taylor_green
 
   ! Random unit-scale complex potential for mode (ix, iz, m).  On the ix = 0
   ! plane the mode (-iz, -m) is the conjugate of (iz, m), which keeps the

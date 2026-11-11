@@ -6,7 +6,10 @@
 
 NVHPC_DIR=/opt/Nvidia/nvhpc/Linux_x86_64/25.9
 export PATH=$NVHPC_DIR/compilers/bin:$NVHPC_DIR/comm_libs/mpi/bin:$PATH
-export LD_LIBRARY_PATH=$NVHPC_DIR/compilers/lib:$NVHPC_DIR/math_libs/lib64:$NVHPC_DIR/cuda/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$NVHPC_DIR/compilers/lib:$NVHPC_DIR/math_libs/lib64:$NVHPC_DIR/cuda/lib64:${LD_LIBRARY_PATH:-}
+
+# Relocated HPC-X OpenMPI: point runtime at its actual prefix (see channel notes)
+export OPAL_PREFIX=$NVHPC_DIR/comm_libs/mpi
 
 # Device architecture for `make GPU=1`
 case "$(hostname)" in

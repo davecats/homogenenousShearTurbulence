@@ -4,7 +4,7 @@
   first = 1, last = 20, step = 1   ! fields/field<n>.fld for n = first, first+step, ..., last
   deck = 'hst.in'                  ! the deck of the run
   outdir = 'statistics'            ! where the files go
-  mean = .true.                    ! mean.dat: plane means U, W, P (without the mean shear S y)
+  mean = .true.                    ! mean.dat: box means U, W, P, constant in y (plane means with a Stokes layer; without S y)
   stresses = .true.                ! stresses.dat: <u_i u_j>(y)
   spectra = .true.                 ! spectra_xz.dat (two-dimensional, y-averaged), spectra_x.dat, spectra_z.dat
   budgets = 'uu vv ww uv uw vw'    ! budget_<ij>.dat for each component listed (prod, diss, pstrain,

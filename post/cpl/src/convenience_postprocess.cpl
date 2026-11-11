@@ -1,0 +1,169 @@
+! READ POSTPRO INPUT FILE
+! ------------------------------------
+STRING input_post=WRITE("postpro.in")
+STRING path_name
+INTEGER nfmin,nfmax,nftot,dn,nf_phase
+FILE data_post=OPENRO[IF COMMANDLINE.HI>0 THEN COMMANDLINE(1) ELSE input_post]
+  READ BY NAME FROM data_post nfmin, nfmax, dn, path_name
+CLOSE data_post
+
+IF nfmin<=0 THEN
+  WRITE "ERROR: nfmin must be positive"
+  STOP
+END IF
+IF nfmax<nfmin THEN
+  WRITE "ERROR: nfmax must be greater than or equal to nfmin"
+  STOP
+END IF
+IF dn<=0 THEN
+  WRITE "ERROR: dn must be positive"
+  STOP
+END IF
+nftot = nfmax-nfmin+1
+
+STRING vel_fld_name, press_fld_name
+STRING path_to_fields=WRITE(path_name'fields/')
+STRING path_to_pfields=WRITE(path_name'p_fields/')
+STRING path_to_statistics=WRITE(path_name'statistics/')
+STRING path_to_vtks=WRITE(path_name"vtks/")
+! STRING filename_out,field_name,pfield_name
+! FILE out
+
+! INITIALIZE MPI
+! ------------------------------------
+#include <mpi.h>
+#link "-lmpi"
+#include <fenv.h>
+INTEGER totnproc, rank
+fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+MPI_Init(argc,argv) ! on some systems triggers a floating-point exception
+MPI_Comm_size(MPI_COMM_WORLD, totnproc)
+MPI_Comm_rank(MPI_COMM_WORLD, rank)
+
+IF totnproc<=0 THEN
+  WRITE "ERROR: MPI returned a non-positive process count"
+  STOP
+END IF
+
+! WORK DISTRIBUTION OVER PROCESSES
+! ------------------------------------
+INTEGER nstart, nend, chunk, remainder
+chunk     = nftot DIV totnproc
+remainder = nftot MOD totnproc
+IF rank < remainder THEN
+  nstart = nfmin  + rank * (chunk + 1)
+  nend   = nstart + (chunk + 1) - 1
+ELSE
+  nstart = nfmin  + remainder * (chunk + 1) + (rank - remainder) * chunk
+  nend   = nstart + chunk - 1
+END IF
+IF nend>nfmax THEN nend = nfmax
+
+! MPI startup and work distribution run with traps disabled because MPI
+! implementations may perform harmless floating-point operations internally.
+! Enable traps only once all startup arithmetic and input validation is done.
+feenableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+
+! GLOBAL VARIABLES
+! ------------------------------------
+! Extended Fourier-lattice for FFTs
+INTEGER nxd=3*nx DIV 2 -1; DO INC nxd UNTIL FFTfit(nxd)
+INTEGER nzd=3*nz -1; DO INC nzd UNTIL FFTfit(nzd)
+! Types
+! x streamwise (u), y vertical (v), z spanwise (w).  VELOCITY lists the
+! components in the order of the velocity files, which store the spanwise
+! component before the vertical one (hstfieldio.cpl); the order is irrelevant
+! everywhere else, where the components are addressed by name.
+VELOCITY  = STRUCTURED ARRAY(u,w,v) OF COMPLEX
+DERIVS    = STRUCTURED ARRAY(ux,uy,uz,vx,vy,vz,wx,wy,wz) OF COMPLEX
+! Physical variables: Fourier modes (ix,iz), mesh rows iy (ghost rows included)
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF VELOCITY V        = 0
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF DERIVS   Vder     = 0
+ARRAY(0..nx,-nz..nz,-2..ny+1) OF COMPLEX  pressure = 0
+! Phase-related variables
+INTEGER phase_num, phase_pos
+INTEGER nf_phase=[(nfmax-nfmin) DIV dn]+1
+ARRAY(1..dn) OF INTEGER nf_vec=0
+LOOP FOR nf = nfmin TO nfmax
+    nf_vec([[(nf-1) MOD dn]+1]) = ~+ 1
+REPEAT
+
+! Every phase must have at least one field.  A zero entry would later cause
+! invalid phase/statistics indexing and can also hide a bad dn/nf range.
+INTEGER nf_vec_bad=0
+LOOP FOR i=1 TO dn
+  IF nf_vec(i)=0 THEN nf_vec_bad=1
+REPEAT
+IF nf_vec_bad>0 THEN
+  WRITE "ERROR: every element of nf_vec must be nonzero"
+  STOP
+END IF
+
+! Actual domain size for computing averages using yintegr()
+REAL Ly_ext = 0
+DO Ly_ext = ~+ [y(iy+1) - y(iy-1)] FOR iy = 0 TO ny-1 BY 2
+
+! Weights of the rows in the y average: yintegr(f)/Ly_ext = SUM yavg_w(iy)*f(iy)
+! (ghost rows are the periodic images of the rows 0..ny-1)
+ARRAY(0..ny-1) OF REAL yavg_w
+SUBROUTINE setup_yavg_weights()
+    ARRAY(-2..ny+1) OF REAL e
+    LOOP FOR iy0=0 TO ny-1
+        e=0
+        e(iy0)=1
+        IF iy0<2 THEN e(ny+iy0)=1
+        IF iy0>=ny-2 THEN e(iy0-ny)=1
+        yavg_w(iy0)=yintegr(e)/Ly_ext
+    REPEAT
+END setup_yavg_weights
+setup_yavg_weights()
+
+
+! Outputs
+! -----------------------------
+POINTER TO STORED ARRAY(0..nx,-nz..nz,-2..ny+1) OF COMPLEX pressuredata
+
+! The corner entries of the SMW system (rows numbered 1..ny, row iy+1 being the
+! equation of mesh row iy)
+SUBROUTINE updateD0mat(INTEGER ix,iz)
+  D0mat=D0mat_0
+  D0mat(1,1)    = derivatives(0   ).d0(-2) * spbc_shift(ix, iz, ny-2, -2  )
+  D0mat(1,2)    = derivatives(0   ).d0(-1) * spbc_shift(ix, iz, ny-1, -1  )
+  D0mat(2,1)    = derivatives(1   ).d0(-2) * spbc_shift(ix, iz, ny-1, -1  )
+  D0mat(ny-1,5) = derivatives(ny-2).d0( 2) * spbc_shift(ix, iz, 0   , ny  )
+  D0mat(ny,4)   = derivatives(ny-1).d0( 1) * spbc_shift(ix, iz, 0   , ny  )
+  D0mat(ny,5)   = derivatives(ny-1).d0( 2) * spbc_shift(ix, iz, 1   , ny+1)
+END updateD0mat
+
+SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS gradV)
+  LOOP FOR ix=0 TO nx
+    ialpha = I*alpha0*ix
+    LOOP FOR iz=-nz TO nz WITH gradV(ix,iz,*), V(ix,iz,*)
+      ibeta = I*beta0*iz
+      updateD0mat(ix,iz)
+      ux(*)=ialpha*u(*);   vx(*)=ialpha*v(*);     wx(*)=ialpha*w(*)
+      uz(*)=ibeta*u(*);    vz(*)=ibeta*v(*);      wz(*)=ibeta*w(*)
+      deriv(u(*),uy(*),ix,iz); deriv(v(*),vy(*),ix,iz); deriv(w(*),wy(*),ix,iz);
+    REPEAT
+  REPEAT
+END velocity_gradient
+
+! ----------------
+! derivm (real first derivative for deriving mean quantities)
+! ----------------
+SUBROUTINE derivm(ARRAY(*) OF REAL f0,f1^)
+  ARRAY(1..ny) OF REAL g
+  DO WITH derivatives(iy) g(iy+1)=[SUM d1(k).REAL*f0({(iy+k) MOD ny}) FOR k=-2 TO 2] FOR iy=0 TO ny-1
+  penta_smw_solve_r(ny, D0mat.REAL, g, g)
+  DO f1(iy)=g(iy+1) FOR iy=0 TO ny-1
+END derivm
+
+! ----------------
+! deriv2m (real second derivative for deriving mean quantities)
+! ----------------
+SUBROUTINE deriv2m(ARRAY(*) OF REAL f0,f2^)
+  ARRAY(1..ny) OF REAL g
+  DO WITH derivatives(iy) g(iy+1)=[SUM d2(k).REAL*f0({(iy+k) MOD ny}) FOR k=-2 TO 2] FOR iy=0 TO ny-1
+  penta_smw_solve_r(ny, D0mat.REAL, g, g)
+  DO f2(iy)=g(iy+1) FOR iy=0 TO ny-1
+END deriv2m

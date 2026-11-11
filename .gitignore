@@ -66,3 +66,26 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# python bytecode source files
+*.pyc
+*/__pycache__/
+.venv*
+
+# cpl build directories
+*.cpl/
+
+# cpl executables
+postprocess
+meanandvar
+
+# run directory
+run/
+run-taylor_green/
+
+# additional
+test_*/
+*.pdf
+*.dat
+plot_runtimedata.ipynb
+compile-test_istm.sh

@@ -20,8 +20,9 @@
   S = 1.0                       ! mean shear dU/dy
   linear = .false.              ! .true. drops the nonlinear terms (tests)
   exact_shift = .false.         ! .true.: advect unweighted quantities, removes a dy^2 error (FINDINGS.md)
-  s2_amplitude = 0.0            ! unsteady spanwise shear dW/dy = S2(t): amplitude (0 = off),
-  s2_period = 0.0               !   period of S2 = A sin(2 pi (t - start)/period) (0 = constant A),
+  s2_mean = 0.0                 ! spanwise shear dW/dy = S2(t): mean value S2_0 (0 and amplitude 0 = off),
+  s2_amplitude = 0.0            !   amplitude of the oscillation about it,
+  s2_period = 0.0               !   S2 = S2_0 + A sin(2 pi (t - start)/period) (0 = constant S2_0 + A),
   s2_start = 0.0                !   time at which it switches on
   sl_amplitude = 0.0            ! Stokes layer at mid-box (0 = off): W = A exp(-s) cos(2 pi (t - t0)/T - s),
   sl_period = 1.0               !   s = |y - ly/2|/delta; needs ystretch > 0 to resolve delta
@@ -42,13 +43,20 @@
   dt_save = 10.0                ! Dati.cart.out restart interval
   time = 0.0                    ! start time when not restarting
   time_from_restart = .false.
+  restart_remap = 'strict'          ! 'mode_index' permits alfa0/beta0 changes
+  restart_file = 'Dati.cart.out'   ! path/name of the binary field read at start-up
+                                    ! (e.g. 'Dati.cart.in.Re2000'); the code always
+                                    ! writes its live checkpoint to Dati.cart.out
   timing = .false.              ! .true.: print the time per phase of the substep at the end
 /
 
 &init
+  initial_condition = 'random'  ! 'random' or 'taylor_green'; Taylor-Green needs alfa0 = beta0 = 2*pi/ly
   amplitude = 0.003             ! scales the random vector potential: 0.003 at kpeak = 8 gives q2 = 0.12 (0.05 gives 32),
   seed = 1                      !   about the stationary value; 1e-3 at kpeak = 4 (q2 = 4e-4) decays without transition (FINDINGS.md)
   kpeak = 8.0                   ! wavenumber of the initial spectrum peak
+  tg_amplitude = 1.0            ! Taylor-Green velocity amplitude
+  tg_mode = 1                    ! positive mode number in x, y and z
 /
 
 ! Optional large-scale damping (DAMPING.md): a body force -g u on the x-z Fourier columns inside

@@ -1,0 +1,92 @@
+! Velocity files, in the layout of the legacy CPL code (written by src/hst_io.f90).
+! The post-processor itself uses the axes of the simulator: x streamwise (u),
+! y vertical (v, ny rows), z spanwise (w, modes -nz..nz).  The legacy code calls
+! the spanwise axis y and the vertical one z, hence the files carry
+!   header      nx=<x modes>  ny=<spanwise modes = our nz>  nz=<rows+1 = our ny+1>
+!   array       ARRAY(0..nx, spanwise -nz..nz, rows -2..ny+1) OF (u, spanwise, vertical)
+! (the four rows -2,-1,ny,ny+1 are shear-periodic ghost rows; the legacy row
+! index of the file is our iy+1) and the label gamma_y= for our spanwise
+! displacement gamma_z.  These legacy names live in this file only.
+FILE field
+
+INTEGER oldnx=nx, oldny=ny, oldnz=nz, oldnrows
+REAL oldalpha0=alpha0, oldbeta0=beta0, oldhtcoeff=htcoeff, oldRe=Re
+STRING oldVfield, oldtime
+STRING oldS1, oldS2, oldgammax, oldgammaz
+
+SUBROUTINE write_field_header()
+  WRITE TO field "nx="nx,"ny="nz,"nz="ny+1,"alpha0="alpha0,"beta0="beta0,"htcoeff="htcoeff,"Re="Re
+  WRITE BY NAME TO field deltat, t_max, dt_field, dt_save
+  WRITE TO field "t_field="time
+END write_field_header
+
+SUBROUTINE read_field_header()
+  READ FROM data "nx="oldnx,"ny="oldnz,"nz="oldnrows,"alpha0="oldalpha0,"beta0="oldbeta0,"htcoeff="oldhtcoeff,"Re="oldRe
+  oldny = oldnrows-1
+END read_field_header
+
+! Scalars shared by restart output and restart input.  The labels and order
+! are part of the legacy field-file format.
+SUBROUTINE write_restart_scalars()
+  WRITE TO field "time="
+  WRITE BINARY TO field time
+  WRITE TO field ""
+  WRITE TO field "S="
+  WRITE BINARY TO field S1
+  WRITE TO field ""
+  WRITE TO field "S2="
+  WRITE BINARY TO field S2
+  WRITE TO field ""
+  WRITE TO field "gamma_x="
+  WRITE BINARY TO field gamma_x
+  WRITE TO field ""
+  WRITE TO field "gamma_y="
+  WRITE BINARY TO field gamma_z
+  WRITE TO field ""
+END write_restart_scalars
+
+SUBROUTINE read_restart_scalars()
+  LOOP UNTIL READ BY NAME FROM data "time="oldtime
+    READ FROM data
+  REPEAT
+  READ BINARY FROM data time
+  start_time=time
+  ! hst writes the streamwise shear using the current `S=` label.  The
+  ! legacy CPL files used `S1=` here; searching for that label in an hst
+  ! field never succeeds and READ BY NAME keeps scanning at EOF forever.
+  LOOP UNTIL READ BY NAME FROM data "S="oldS1
+    READ FROM data
+  REPEAT
+  READ BINARY FROM data S1
+  LOOP UNTIL READ BY NAME FROM data "S2="oldS2
+    READ FROM data
+  REPEAT
+  READ BINARY FROM data S2
+  LOOP UNTIL READ BY NAME FROM data "gamma_x="oldgammax
+    READ FROM data
+  REPEAT
+  READ BINARY FROM data gamma_x
+  ! file label of the spanwise displacement (legacy name of the spanwise axis)
+  LOOP UNTIL READ BY NAME FROM data "gamma_y="oldgammaz
+    READ FROM data
+  REPEAT
+  READ BINARY FROM data gamma_z
+END read_restart_scalars
+
+! The payload is kept here with the format code, while the caller remains
+! responsible for rank ordering and for opening/closing the file.
+SUBROUTINE write_velocity_payload()
+  WRITE TO field "Vfield="
+  POINTER TO STORED STRUCTURE[CHAR skip[1..POSITION(field)]; ARRAY(0..nx,-nz..nz,-2..ny+1) OF VELOCITY saveV] image=field
+  image.saveV(V.LO1..V.HI1,V.LO2..V.HI2)=V
+END write_velocity_payload
+
+SUBROUTINE read_velocity_payload()
+  LOOP UNTIL READ BY NAME FROM data "Vfield="oldVfield
+    READ FROM data
+  REPEAT
+  POINTER TO STORED STRUCTURE[CHAR skip[1..POSITION(data)]; ARRAY(0..oldnx,-oldnz..oldnz,-2..oldny+1) OF VELOCITY oldV] image=data
+  LOOP FOR ix=MAX(V.LO1,image.oldV.LO1) TO MIN(V.HI1,image.oldV.HI1) AND iz=MAX(V.LO2,image.oldV.LO2) TO MIN(V.HI2,image.oldV.HI2)
+    DO V(ix,iz,iy)=image.oldV[ix,iz,-2+(oldny+3)*(iy+2)DIV(ny+3)] FOR ALL iy
+  REPEAT
+END read_velocity_payload

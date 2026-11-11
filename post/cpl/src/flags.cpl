@@ -1,0 +1,7 @@
+! POSTPRO FLAGS
+#define compute_variances
+! #define compute_pressure
+#define compute_budget
+#define compute_spectra
+#define compute_pstrain_spectra
+#define convert_to_vtk

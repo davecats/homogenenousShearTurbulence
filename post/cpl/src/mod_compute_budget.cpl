@@ -1,0 +1,142 @@
+! Definitions
+! ------------------------------------
+! x streamwise (u), y vertical (v), z spanwise (w).  The six components of the
+! Reynolds-stress tensor are stored in the order 1:uu 2:vv 3:ww 4:uv 5:uw 6:vw.
+#define cprod(f,g,h) h.REAL=f.REAL*g.REAL; h.IMAG=f.IMAG*g.IMAG
+#define cprod3(f,g,k,h) h.REAL=f.REAL*g.REAL*k.REAL; h.IMAG=f.IMAG*g.IMAG*k.IMAG
+DERPRODSEXT = STRUCTURED ARRAY(ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz) OF COMPLEX
+BALANCE     = STRUCTURED ARRAY(var,prod,psdiss,pstrain,forcingprod) OF ARRAY(1..6) OF REAL
+
+! Variables in memory
+! ------------------------------------
+ARRAY(0..nxd-1,0..nzd-1)      OF VELOCITY    Vd
+ARRAY(0..nxd-1,0..nzd-1)      OF DERIVS      Vderd=0
+ARRAY(0..nxd-1,0..nzd-1)      OF DERPRODSEXT Vmderd=0
+ARRAY(0..nxd-1,0..nzd-1,1..6) OF COMPLEX     PHIttrspd=0, forcingprodd=0
+ARRAY(-2..ny+1)               OF BALANCE     uiuj_budg_prof=0
+ARRAY(1..dn)                  OF BALANCE     uiuj_budg_phase=0, uiuj_budg_phase_chunk=0
+
+SUBROUTINE accum_budget()
+    uiuj_budg_prof=0
+    ! Parseval theorem method for var and pstrain
+    LOOP FOR iy=0 TO ny-1 WITH uiuj_budg_prof(iy):
+        LOOP FOR ALL ix,iz WITH V(ix,iz,iy),Vder(ix,iz,iy):
+            p == pressure(ix,iz,iy)
+            c=IF ix=0 THEN 1 ELSE 2
+            ! re-stresses
+            var(1)=~+c*(u|u).REAL; var(2)=~+c*(v|v).REAL; var(3)=~+c*(w|w).REAL
+            var(4)=~+c*(u|v).REAL; var(5)=~+c*(u|w).REAL; var(6)=~+c*(v|w).REAL
+            ! pressure strain
+            pstrain(1)=~+2*c*[ux|p].REAL; pstrain(4)=~+c*[(uy|p)+(vx|p)].REAL
+            pstrain(2)=~+2*c*[vy|p].REAL; pstrain(5)=~+c*[(uz|p)+(wx|p)].REAL
+            pstrain(3)=~+2*c*[wz|p].REAL; pstrain(6)=~+c*[(vz|p)+(wy|p)].REAL
+        REPEAT
+    REPEAT
+    ! Pseudo-spectral method for psdiss and PHIttrsp
+    LOOP FOR iy=-2 TO ny+1
+        LOOP FOR ix=0 TO nx
+            ! padded array for velocity derivatives (3/2 rule)
+            DO Vderd(ix,iz)=Vder(ix,iz,iy) FOR iz=0 TO nz
+            DO Vderd(ix,iz)=0 FOR iz=nz+1 TO nzd-nz-1
+            DO Vderd(ix,nzd+iz)=Vder(ix,iz,iy) FOR iz=-nz TO -1
+            ! padded array for velocity (3/2 rule)
+            DO Vd(ix,iz)=V(ix,iz,iy) FOR iz=0 TO nz
+            DO Vd(ix,iz)=0 FOR iz=nz+1 TO nzd-nz-1
+            DO Vd(ix,nzd+iz)=V(ix,iz,iy) FOR iz=-nz TO -1
+            ! fft to physical space in z (spanwise)
+            WITH Vderd(ix,*): INLINE LOOP FOR ii IN (ux,vx,wx,uy,vy,wy,uz,vz,wz); IFT(ii); REPEAT
+            WITH Vd(ix,*):    INLINE LOOP FOR i  IN (u,v,w); IFT(i); REPEAT
+        REPEAT LOOP
+        ! padding
+        DO Vd(ix)=0 FOR ix=nx+1 TO nxd-1
+        DO Vderd(ix)=0 FOR ix=nx+1 TO nxd-1
+        ! compute velocity derivatives products
+        DO
+            ! fft to physical space in x (streamwise)
+            WITH Vderd(*,iz): INLINE LOOP FOR ii IN (ux,vx,wx,uy,vy,wy,uz,vz,wz); RFT(ii); REPEAT
+            WITH Vd(*,iz):    INLINE LOOP FOR i  IN (u,v,w); RFT(i); REPEAT
+            DO WITH Vderd(ix,iz), Vmderd(ix,iz), Vd(ix,iz):
+                ! products
+                cprod(ux,ux,ux2);  cprod(uy,uy,uy2);  cprod(uz,uz,uz2);  cprod(vx,vx,vx2);  cprod(vy,vy,vy2);  cprod(vz,vz,vz2)
+                cprod(wx,wx,wx2);  cprod(wy,wy,wy2);  cprod(wz,wz,wz2);  cprod(ux,vx,uxvx); cprod(uy,vy,uyvy); cprod(uz,vz,uzvz)
+                cprod(ux,wx,uxwx); cprod(uy,wy,uywy); cprod(uz,wz,uzwz); cprod(vx,wx,vxwx); cprod(vy,wy,vywy); cprod(vz,wz,vzwz)
+                ! forcing-production (due to the fluctuation S2' = S2 - <S2> of the spanwise shear)
+                cprod3(S2_f*(1+I),v,w,forcingprodd(ix,iz,3)) ! ww
+                cprod3(S2_f*(1+I),u,v,forcingprodd(ix,iz,5)) ! uw
+                cprod3(S2_f*(1+I),v,v,forcingprodd(ix,iz,6)) ! vw
+            FOR ALL ix
+            ! fft to Fourier space in x
+            WITH Vmderd(*,iz): INLINE LOOP FOR iii IN (ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz); HFT(iii); REPEAT
+            ! DO HFT(PHIttrspd(*,iz,i)) FOR ALL i
+            DO HFT(forcingprodd(*,iz,i)) FOR ALL i
+        FOR iz=0 TO nzd-1
+        ! fft to Fourier space in z
+        DO WITH Vmderd(ix,*): INLINE LOOP FOR iii IN (ux2,vx2,wx2,uy2,vy2,wy2,uz2,vz2,wz2,uxvx,uyvy,uzvz,uxwx,uywy,uzwz,vxwx,vywy,vzwz); FFT(iii); REPEAT
+        ! DO FFT(PHIttrspd(ix,*,i)) FOR ALL i
+        DO FFT(forcingprodd(ix,*,i)) FOR ALL i
+        FOR ix=0 TO nx+1
+
+        WITH Vmderd(0,0), uiuj_budg_prof(iy):
+            ! dissipation
+            psdiss(1)=~+2*nu*REAL[ux2+uy2+uz2]; psdiss(4)=~+2*nu*REAL[uxvx+uyvy+uzvz]
+            psdiss(2)=~+2*nu*REAL[vx2+vy2+vz2]; psdiss(5)=~+2*nu*REAL[uxwx+uywy+uzwz]
+            psdiss(3)=~+2*nu*REAL[wx2+wy2+wz2]; psdiss(6)=~+2*nu*REAL[vxwx+vywy+vzwz]
+            ! de-aliased forcing-production
+            forcingprod(1)=~-2*forcingprodd(0,0,1).REAL; forcingprod(4)=~-forcingprodd(0,0,4).REAL
+            forcingprod(2)=~-2*forcingprodd(0,0,2).REAL; forcingprod(5)=~-forcingprodd(0,0,5).REAL
+            forcingprod(3)=~-2*forcingprodd(0,0,3).REAL; forcingprod(6)=~-forcingprodd(0,0,6).REAL
+        END WITH
+    REPEAT
+    ! Periodic b.c. for stats (stat. homogeneity)
+    uiuj_budg_prof(ny  ) = uiuj_budg_prof(0)
+    uiuj_budg_prof(ny+1) = uiuj_budg_prof(1)
+    uiuj_budg_prof(-1  ) = uiuj_budg_prof(ny-1)
+    uiuj_budg_prof(-2  ) = uiuj_budg_prof(ny-2)
+    ! Integrate over y and accumulate over fields
+    LOOP FOR ALL i,j
+        uiuj_budg_phase_chunk(phase_num, i, j) = ~+ yintegr(uiuj_budg_prof(*, i, j))/Ly_ext
+    REPEAT LOOP
+END accum_budget
+
+SUBROUTINE mpi_comm_budget()
+    LOOP FOR np = 1 TO dn
+        ! MPI sum (mean values available only to process with rank=0)
+        DO MPI_Reduce(uiuj_budg_phase_chunk(np, i, j), uiuj_budg_phase(np, i, j), 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD) FOR ALL i,j
+
+        IF rank=0 THEN
+            ! var,psdiss,pstrain,forcingprod
+            DO uiuj_budg_phase(np, i, j) = ~/ nf_vec(np) FOR ALL i,j
+            ! prod (mean flow U = S*y, W = S2*y)
+            WITH uiuj_budg_phase(np):
+                prod(1) = - 2*var(4)*S
+                prod(2) =   0
+                prod(3) = - 2*var(6)*S2_m_phase(np)
+                prod(4) = - var(2)*S
+                prod(5) = - var(4)*S2_m_phase(np) - var(6)*S
+                prod(6) = - var(2)*S2_m_phase(np)
+            END WITH
+        END IF
+    REPEAT LOOP
+END mpi_comm_budget
+
+SUBROUTINE write_budget()
+    ARRAY(1..6) OF STRING comp_name
+    comp_name(1)="uu"; comp_name(2)="vv"; comp_name(3)="ww"
+    comp_name(4)="uv"; comp_name(5)="uw"; comp_name(6)="vw"
+    STRING filename_budg
+    FILE   out_budg
+    IF rank=0 THEN
+        LOOP FOR i = 1 TO 6
+            filename_budg = WRITE(path_to_statistics'budget_'comp_name(i)'.dat')
+            out_budg=CREATE(filename_budg)
+                WRITE TO out_budg "# phase   uiuj   prod    psdiss  pstrain forcingprod"
+                DO WITH uiuj_budg_phase(np):
+                    WRITE TO out_budg np,
+                                        var(i)         :1.15, prod(i)    :1.15,
+                                        psdiss(i)      :1.15, pstrain(i) :1.15,
+                                        forcingprod(i) :1.15
+                FOR np = 1 TO dn
+            CLOSE out_budg
+        REPEAT LOOP
+    END IF
+END write_budget

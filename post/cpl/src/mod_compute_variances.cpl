@@ -1,0 +1,92 @@
+! Define types
+! ------------------------------------
+REALVELOCITY = STRUCTURE(REAL u,v,w)
+REALVARIANCE = STRUCTURE(REAL uu,uv,uw,vv,vw,ww)
+
+! Variables in memory
+! ------------------------------------
+REALVELOCITY mean_vel
+REALVARIANCE var_vel , var_vel_tmp
+REALVARIANCE var_vel_prof_tmp(-2..ny+1)
+REALVARIANCE var_vel_phase(1..dn), var_vel_phase_chunk(1..dn)=0
+
+SUBROUTINE accum_variances()
+    ! Reset per-y profile accumulator before each field
+    var_vel_prof_tmp = 0
+    ! Parseval theorem method for var and pstrain
+    LOOP FOR iy=0 TO ny-1 WITH var_vel_prof_tmp(iy):
+        LOOP FOR ALL ix,iz WITH V(ix,iz,iy):
+            c = IF ix=0 THEN 1 ELSE 2
+            ! re-stresses
+            uu = ~+ c*(u|u).REAL; vv = ~+ c*(v|v).REAL; ww = ~+ c*(w|w).REAL
+            uv = ~+ c*(u|v).REAL; uw = ~+ c*(u|w).REAL; vw = ~+ c*(v|w).REAL
+        REPEAT
+    REPEAT
+    ! Periodic b.c. for variances (stat. homogeneity)
+    var_vel_prof_tmp(ny  ) = var_vel_prof_tmp(0)
+    var_vel_prof_tmp(ny+1) = var_vel_prof_tmp(1)
+    var_vel_prof_tmp(-1  ) = var_vel_prof_tmp(ny-1)
+    var_vel_prof_tmp(-2  ) = var_vel_prof_tmp(ny-2)
+    ! Avg. in y (stats. computed as instantaneous vol. avg.)
+    WITH mean_vel_tmp, var_vel_tmp:
+        uu = yintegr( var_vel_prof_tmp(*).uu)/Ly_ext
+        vv = yintegr( var_vel_prof_tmp(*).vv)/Ly_ext
+        ww = yintegr( var_vel_prof_tmp(*).ww)/Ly_ext
+        uv = yintegr( var_vel_prof_tmp(*).uv)/Ly_ext
+        uw = yintegr( var_vel_prof_tmp(*).uw)/Ly_ext
+        vw = yintegr( var_vel_prof_tmp(*).vw)/Ly_ext
+    END WITH
+    ! Store velocity variances at correct phase
+    WITH mean_vel_tmp, var_vel_tmp:
+        ! var
+        var_vel_phase_chunk( phase_num).uu = ~+ uu
+        var_vel_phase_chunk( phase_num).vv = ~+ vv
+        var_vel_phase_chunk( phase_num).ww = ~+ ww
+        var_vel_phase_chunk( phase_num).uv = ~+ uv
+        var_vel_phase_chunk( phase_num).uw = ~+ uw
+        var_vel_phase_chunk( phase_num).vw = ~+ vw
+    END WITH
+END accum_variances
+
+SUBROUTINE mpi_comm_variances()
+    LOOP FOR np = 1 TO dn
+        ! var
+        MPI_Reduce(var_vel_phase_chunk(np).uu, var_vel_phase(np).uu, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        MPI_Reduce(var_vel_phase_chunk(np).vv, var_vel_phase(np).vv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        MPI_Reduce(var_vel_phase_chunk(np).ww, var_vel_phase(np).ww, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        MPI_Reduce(var_vel_phase_chunk(np).uv, var_vel_phase(np).uv, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        MPI_Reduce(var_vel_phase_chunk(np).uw, var_vel_phase(np).uw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        MPI_Reduce(var_vel_phase_chunk(np).vw, var_vel_phase(np).vw, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        ! Divide by number of fields in each phase
+        IF rank=0 THEN
+            ! var
+            var_vel_phase(np).uu = ~/ nf_vec(np)
+            var_vel_phase(np).vv = ~/ nf_vec(np)
+            var_vel_phase(np).ww = ~/ nf_vec(np)
+            var_vel_phase(np).uv = ~/ nf_vec(np)
+            var_vel_phase(np).uw = ~/ nf_vec(np)
+            var_vel_phase(np).vw = ~/ nf_vec(np)
+            ! mean
+            mean_vel.u = mean_fld_phase(np).Um
+            mean_vel.v = mean_fld_phase(np).Vm
+            mean_vel.w = mean_fld_phase(np).Wm
+        END IF
+    REPEAT
+END mpi_comm_variances
+
+SUBROUTINE write_variances()
+    STRING filename_var
+    FILE   out_var
+    IF rank=0 THEN
+        filename_var = WRITE(path_to_statistics'velstats.dat')
+        out_var=CREATE(filename_var)
+        WRITE TO out_var "# phase   U   V   W   uu	vv	ww	uv	uw	vw"
+        DO WITH mean_vel, var_vel_phase(np):
+            WRITE TO out_var np,
+                            u  :1.15, v  :1.15, w  :1.15,
+                            uu :1.15, vv :1.15, ww :1.15,
+                            uv :1.15, uw :1.15, vw :1.15
+        FOR np = 1 TO dn
+        CLOSE out_var
+    END IF
+END write_variances

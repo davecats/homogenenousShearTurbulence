@@ -28,6 +28,7 @@ program hst
   use hst_transforms
   use hst_equations
   use hst_io
+  use hst_initial, only: generate_initial_field
   use hst_stats
   use hst_pressure
   use hst_stokes
@@ -66,7 +67,12 @@ program hst
   call setup_derivatives()
   call damping_setup()
   call make_output_dirs()
-  call restart_read('Dati.cart.out')
+  if (restart_from_file) then
+    call restart_read(trim(restart_file))    ! loads the file, or generates a field if it is absent
+  else
+    if (has_terminal) print *, '   restart_from_file = .false.: generating initial field'
+    call generate_initial_field()
+  end if
   !$omp target update to(V)
   call stokes_setup()
   call stokes_apply()
@@ -84,7 +90,7 @@ program hst
     print '(A,F8.3)', '   WARNING: explicit damping with damp_rate*deltat = ', damp_rate*deltat
   ifield = floor(time/dt_field)          ! CPL numbering: fields/field<ifield+1>.fld is the next one
   if (has_terminal) write (*, '(A)') '        time       deltat       cfl         energy           diss' // &
-    '           uw/2           vw/2      (CPL Runtimedata columns 10-13)'
+    '             uv             vw      (y-averaged; diss = nu <grad u : grad u>)'
   call outstats()
 
   !--------------------------------------------------------- time loop ----
@@ -105,7 +111,7 @@ program hst
       call restart_write(trim(fname))
       write (fname, '(A,I0,A)') 'p_fields/pField', ifield, '.fld'
       call write_pressure(trim(fname))
-      write (fname, '(A,I0,A)') 'spectra/exz', ifield, '.dat'
+      write (fname, '(A,I0,A)') 'statistics/spectra/exz', ifield, '.dat'
       call spectrum_write(trim(fname))
       if (has_terminal) print '(A,F8.1,A)', '   velocity and pressure snapshots written in', MPI_Wtime() - t_io, ' s'
     end if

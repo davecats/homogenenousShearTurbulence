@@ -1,0 +1,106 @@
+! Pressure-strain spectra of the fluctuating field.
+!
+! x streamwise (u, wavenumber kx=alpha0*ix, ix=0..nx), y vertical (v), z spanwise
+! (w, kz=beta0*iz, iz=-nz..nz).  Like the velocity spectra of
+! mod_compute_spectra.cpl, they are resolved in the vertical position (every
+! mesh row iy=0..ny-1) and folded in the sign of kz:
+!   PS_ij(iy,ix,|iz|) = SUM over +-iz of  c * Re[ ((du_i/dx_j + du_j/dx_i) | p) ],
+!                       c = 1 for ix=0, 2 otherwise
+! with (f|p) = f conj(p) (c accounts for the half of the x modes that is not
+! stored), i.e. the contribution of each wavenumber to the pressure-strain term
+! <p (du_i/dx_j + du_j/dx_i)> of the budget of <u_i u_j> (the factor of the
+! diagonal terms is 2, as the two derivatives coincide):
+!   1:uu 2*ux   2:vv 2*vy   3:ww 2*wz   4:uv uy+vx   5:uw uz+wx   6:vw vz+wy
+! The values are mode energies, not densities, and they are weighted exactly like
+! the pressure-strain of mod_compute_budget.cpl: sum_iy w(iy) sum_{ix,iz} PS_ij
+! equals the column `pstrain` of the file budget_<ij>.dat, with the y-average
+! weights w(iy) (yavg_w, convenience_postprocess.cpl).
+!
+! The pressure is the fluctuation about the phase mean (apply_rey_decomp, see
+! mod_rey_decomp.cpl), the spectra are accumulated and averaged phase by phase.
+! This module needs the velocity gradient Vder (with periodic ghost rows) and the
+! pressure of the field, and must be used after apply_rey_decomp().
+!
+! Output (statistics/):
+!  - pstrain_spectra.bin: binary, REAL (8 bytes), C order, i.e. an array of shape
+!    (dn, 6, ny, nx+1, nz+1) indexed (phase, component, iy, ix, |iz|); no header.
+!    Same layout as spectra.bin of the velocity spectra.
+!  - pstrain_spectra_kx.dat, pstrain_spectra_kz.dat: text, y-averaged
+!    one-dimensional spectra PS(kx) (sum over kz) and PS(|kz|) (sum over kx),
+!    one block per phase.
+
+! Variables in memory
+! ------------------------------------
+ARRAY(1..dn,1..6,0..ny-1,0..nx,0..nz) OF REAL pst_chunk=0
+ARRAY(1..6,0..ny-1,0..nx,0..nz) OF REAL pst_tot
+ARRAY(1..dn,0..nx,1..6) OF REAL pst_kx=0
+ARRAY(1..dn,0..nz,1..6) OF REAL pst_kz=0
+
+SUBROUTINE accum_pstrain_spectra()
+    LOOP FOR iy=0 TO ny-1
+        LOOP FOR ALL ix,iz WITH Vder(ix,iz,iy):
+            p == pressure(ix,iz,iy)
+            c = IF ix=0 THEN 1 ELSE 2
+            ik = ABS(iz)
+            pst_chunk(phase_num,1,iy,ix,ik) = ~+ 2*c*[ux|p].REAL
+            pst_chunk(phase_num,2,iy,ix,ik) = ~+ 2*c*[vy|p].REAL
+            pst_chunk(phase_num,3,iy,ix,ik) = ~+ 2*c*[wz|p].REAL
+            pst_chunk(phase_num,4,iy,ix,ik) = ~+ c*[(uy|p)+(vx|p)].REAL
+            pst_chunk(phase_num,5,iy,ix,ik) = ~+ c*[(uz|p)+(wx|p)].REAL
+            pst_chunk(phase_num,6,iy,ix,ik) = ~+ c*[(vz|p)+(wy|p)].REAL
+        REPEAT
+    REPEAT
+END accum_pstrain_spectra
+
+! MPI sum over the processes, average over the fields of each phase and output of
+! the binary file (the phases are appended one at a time, to limit the memory),
+! then the one-dimensional spectra in text form.
+SUBROUTINE write_pstrain_spectra()
+    INTEGER nslab = 6*ny*(nx+1)*(nz+1)
+    STRING filename_spec
+    FILE   out_spec
+    IF rank=0 THEN
+        filename_spec=WRITE(path_to_statistics'pstrain_spectra.bin')
+        out_spec=CREATE(filename_spec)
+    END IF
+    LOOP FOR np=1 TO dn
+        ! MPI sum (spectra available only to process with rank=0)
+        MPI_Reduce(pst_chunk(np,1,0,0,0), pst_tot(1,0,0,0), nslab, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD)
+        IF rank=0 THEN
+            ! Divide by number of fields in each phase
+            DO pst_tot(c,iy,ix,ik) = ~/ nf_vec(np) FOR ALL c,iy,ix,ik
+            ! Binary file: append this phase
+            LOOP FOR c=1 TO 6 AND iy=0 TO ny-1
+                WRITE BINARY TO out_spec pst_tot(c,iy)
+            REPEAT
+            ! y-averaged one-dimensional spectra
+            LOOP FOR c=1 TO 6 AND iy=0 TO ny-1 AND ix=0 TO nx AND ik=0 TO nz
+                pst_kx(np,ix,c) = ~+ yavg_w(iy)*pst_tot(c,iy,ix,ik)
+                pst_kz(np,ik,c) = ~+ yavg_w(iy)*pst_tot(c,iy,ix,ik)
+            REPEAT
+        END IF
+    REPEAT
+    IF rank=0 THEN
+        CLOSE out_spec
+        ! 1D streamwise spectra PS(kx) = sum over kz
+        filename_spec = WRITE(path_to_statistics'pstrain_spectra_kx.dat')
+        out_spec=CREATE(filename_spec)
+        WRITE TO out_spec "# phase   ix   kx   PSuu   PSvv   PSww   PSuv   PSuw   PSvw"
+        LOOP FOR np=1 TO dn AND ix=0 TO nx
+            WRITE TO out_spec np, ix, alpha0*ix :1.15,
+                              pst_kx(np,ix,1) :1.15, pst_kx(np,ix,2) :1.15, pst_kx(np,ix,3) :1.15,
+                              pst_kx(np,ix,4) :1.15, pst_kx(np,ix,5) :1.15, pst_kx(np,ix,6) :1.15
+        REPEAT
+        CLOSE out_spec
+        ! 1D spanwise spectra PS(|kz|) = sum over kx and over +-kz
+        filename_spec = WRITE(path_to_statistics'pstrain_spectra_kz.dat')
+        out_spec=CREATE(filename_spec)
+        WRITE TO out_spec "# phase   iz   kz   PSuu   PSvv   PSww   PSuv   PSuw   PSvw"
+        LOOP FOR np=1 TO dn AND ik=0 TO nz
+            WRITE TO out_spec np, ik, beta0*ik :1.15,
+                              pst_kz(np,ik,1) :1.15, pst_kz(np,ik,2) :1.15, pst_kz(np,ik,3) :1.15,
+                              pst_kz(np,ik,4) :1.15, pst_kz(np,ik,5) :1.15, pst_kz(np,ik,6) :1.15
+        REPEAT
+        CLOSE out_spec
+    END IF
+END write_pstrain_spectra

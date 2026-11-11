@@ -7,7 +7,7 @@ reasoning.  What was learned while implementing it is in
 the code departed from this plan:
 
 - The file formats are those of the CPL code (`Dati.cart.out`,
-  `fields/field<n>.fld`, `p_fields/pField<n>.fld`, `Runtimedata` with the
+  `fields/field<n>.fld`, `p_fields/pField<n>.fld`, `statistics/Runtimedata` with the
   CPL columns) and nothing else, so the CPL post-processing reads them
   (section 2 "Output" and the optional writer of section 5 are superseded).
 - The unsteady spanwise shear `S2`, the Stokes layer with its body force
@@ -130,7 +130,7 @@ What is deleted outright: `y_schur_solver.f90` (958), `y_line_solvers.fypp`
 and wall closures), `wall_closure.fypph`, `channel_boundaries.fypph`,
 `channel_bcs.f90`, `byte_workspace.fypp`, `env_options.f90`, `roctx.f90`,
 `config.f90` (replaced by a namelist), all scalars (`nPhi`), flow-rate /
-pressure-gradient correction, `post/`, `tests/*.py`, `postpro/`, cuSPARSE.
+pressure-gradient correction, `post/python/`, `tests/*.py`, `postpro/`, cuSPARSE.
 Section 7 records why each of the four larger deletions (y-decomposition,
 NCCL, autotuner, cuSPARSE) was made and what it takes to bring it back.
 
@@ -186,7 +186,7 @@ kernel calls it).
 &physics  re=1000.0, s=1.0, linear=.false. /
 &time     deltat=0.0, cflmax=1.0, t_max=100.0, nstep=1000000,
           dt_stat=0.01, dt_field=10.0, dt_save=10.0, time=0.0,
-          time_from_restart=.false. /
+          time_from_restart=.false., restart_file='Dati.cart.out' /
 &init     amplitude=1.0e-3, seed=1, kpeak=4.0 /
 ```
 
@@ -196,7 +196,7 @@ surprises.
 
 **Output.**  `Runtimedata` (one line per `dt_stat`: `time, deltat, cfl,
 2*tke, dissipation, <uv>, <uu>, <vv>, <ww>`, the same quantities as the CPL
-`Runtimedata` + `variances_runtime.dat`), `Dati.cart.out` restart every
+`Runtimedata` + `variances_runtime.dat`; the fluctuation is the field minus its box mean (the (0,0,0) mode), as in `post/cpl`, README.md), `Dati.cart.out` restart every
 `dt_save`, `Dati.cart.<i>.out` snapshots every `dt_field`, all in the
 channel's MPI-IO stream format with a 12-number header.
 

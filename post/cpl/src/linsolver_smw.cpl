@@ -1,0 +1,199 @@
+! This module defines the routines necessary to implement the Sherman–Morrison–Woodbury (SMW) formula.
+! The SMW method is used for the solution of a linear system, say A*x=b, where the matrix A (dimension n*n)
+! has a pentadiagonal structure, except for 6 non-diagonal entries. These extra entries are located at the
+! upper-right and lower-left corners, i.e. A(1,n-1)=c1, A(1,n)=c2, A(2,n)=c3, A(n-1,1)=c4, A(n,1)=c5, A(n,2)=c6.
+! Given this structure, the matrix A can be stored as a n*5 matrix, say a. Memory requirements and computational
+! cost scale as O(n) (with SMW) instead of O(n**2) (with LU decomposition).
+!
+! The main subroutine of this module is penta_smw_solve(n,a,b,x).
+! This function solves the linear system A*x = b, where A is pentadiagonal, except for the corner terms.
+! The matrix A (pentadiagonal B + corner terms c) is stored in the matrix a, which is n*5.
+!
+! Storage:
+!   a(*,1) -> sub-sub-diagonal
+!   a(*,2) -> sub-diagonal
+!   a(*,3) -> main-diagonal
+!   a(*,4) -> super-diagonal
+!   a(*,5) -> super-super-diagonal
+!   a(1,1)   = c1
+!   a(1,2)   = c2
+!   a(2,1)   = c3
+!   a(n-1,5) = c4
+!   a(n,4)   = c5
+!   a(n,5)   = c6
+!
+! On exit: a and b are NOT overwritten.
+! Inputs:
+!   n    -> integer, system size
+!   a    -> complex array (n*5) with pentadiagonal + corner data
+!   b    -> complex array (n*1) RHS
+! Outputs:
+!   x    -> complex array (n*1) solution
+
+! Module contains:
+SUBROUTINE penta_smw_solve(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX a; ARRAY(1..n) OF COMPLEX b; POINTER TO ARRAY(1..n) OF COMPLEX x) FOLLOWS
+SUBROUTINE penta_smw_solve_r(INTEGER n; ARRAY(1..n,1..5) OF REAL ar; ARRAY(1..n) OF REAL br; POINTER TO ARRAY(1..n) OF REAL xr) FOLLOWS
+
+! Uncomment for an inexpensive, per-solve residual check.  The check uses the
+! original matrix, including its six SMW corner entries.
+! #define debug_penta_smw
+
+MODULE linsolver_smw
+
+    SUBROUTINE penta_multiply(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX a_in; ARRAY(1..n) OF COMPLEX b_in; POINTER TO ARRAY(*) OF COMPLEX x)
+        x(1)=[SUM a_in(1,k)*b_in(1+k-3) FOR k=3 TO 5]+a_in(1,1)*b_in(n-1)+a_in(1,2)*b_in(n)
+        x(2)=[SUM a_in(2,k)*b_in(2+k-3) FOR k=2 TO 5]+a_in(2,1)*b_in(n)
+        DO x(i)=[SUM a_in(i,k)*b_in(i+k-3) FOR k=1 TO 5] FOR i=3 TO n-2
+        x(n-1)=[SUM a_in(n-1,k)*b_in(n-1+k-3) FOR k=1 TO 4]+a_in(n-1,5)*b_in(1)
+        x(n)=[SUM a_in(n,k)*b_in(n+k-3) FOR k=1 TO 3]+a_in(n,4)*b_in(1)+a_in(n,5)*b_in(2)
+    END penta_multiply
+
+    SUBROUTINE penta_smw_check(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX a_in; ARRAY(1..n) OF COMPLEX b_in; ARRAY(1..n) OF COMPLEX x_in)
+        ARRAY(1..n) OF COMPLEX ax
+        REAL residual, scale, backward_error
+        penta_multiply(n, a_in, x_in, ax)
+        residual=0; scale=0
+        LOOP FOR i=1 TO n
+            residual=MAX(residual,ABS(ax(i)-b_in(i)))
+            scale=MAX(scale,ABS(ax(i))); scale=MAX(scale,ABS(b_in(i)))
+        REPEAT
+        IF scale=0 THEN scale=1 END IF
+        ! scale=1
+        backward_error=residual/scale
+        ! WRITE "penta_smw residual: abs="residual", scaled="backward_error
+        ! 1E-13 allows a small amount of growth over machine epsilon while
+        ! still catching an incorrectly assembled or poorly solved system.
+        IF backward_error>1E-14 THEN
+            WRITE TO stderr "WARNING: penta_smw residual exceeds debug tolerance: "backward_error
+        END IF
+    END penta_smw_check
+
+    SUBROUTINE penta_factor(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX a_in; POINTER TO ARRAY(1..n,1..5) OF COMPLEX a_fact)
+        a_fact = a_in
+        LOOP FOR i=1 TO n-2
+            piv=a_fact(i,3)
+            ! Optional in debug builds:
+            #ifdef debug_penta_smw
+                IF ABS(piv)<1E-14 THEN
+                    WRITE "zero pivot in penta_factor at row "i
+                    EXIT penta_factor
+                END IF
+            #endif
+            m1=a_fact(i+1,2)/piv
+            m2=a_fact(i+2,1)/piv
+            a_fact(i+1,2)=m1
+            a_fact(i+2,1)=m2
+            a_fact(i+1,3)=a_fact(i+1,3)-m1*a_fact(i,4)
+            a_fact(i+1,4)=a_fact(i+1,4)-m1*a_fact(i,5)
+            a_fact(i+2,2)=a_fact(i+2,2)-m2*a_fact(i,4)
+            a_fact(i+2,3)=a_fact(i+2,3)-m2*a_fact(i,5)
+        REPEAT
+        m1=a_fact(n,2)/a_fact(n-1,3)
+        a_fact(n,2)=m1
+        a_fact(n,3)=a_fact(n,3)-m1*a_fact(n-1,4)
+        #ifdef debug_penta_smw
+            IF ABS[a_fact(n-1,3)]<1E-14 OR ABS[a_fact(n,3)]<1E-14 THEN
+                WRITE "zero pivot in penta_factor"
+                EXIT penta_factor
+            END IF
+        #endif
+    END penta_factor
+
+    SUBROUTINE penta_solve_factored(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX af; ARRAY(1..n) OF COMPLEX b_in; POINTER TO ARRAY(*) OF COMPLEX x)
+        TYPEOF(b_in) b=b_in
+        ! Forward substitution.
+        LOOP FOR i=1 TO n-2
+            b(i+1)=b(i+1)-af(i+1,2)*b(i)
+            b(i+2)=b(i+2)-af(i+2,1)*b(i)
+        REPEAT
+        b(n)=b(n)-af(n,2)*b(n-1)
+        ! Back substitution.
+        x(n)=b(n)/af(n,3)
+        x(n-1)=[b(n-1)-af(n-1,4)*x(n)]/af(n-1,3)
+        LOOP FOR j=n-2 TO 1 BY -1
+            x(j)=[b(j)-af(j,4)*x(j+1)-af(j,5)*x(j+2)]/af(j,3)
+        REPEAT
+    END penta_solve_factored
+
+    SUBROUTINE penta_smw_solve(INTEGER n; ARRAY(1..n,1..5) OF COMPLEX a; ARRAY(1..n) OF COMPLEX b; POINTER TO ARRAY(1..n) OF COMPLEX x)
+        ! Local arrays
+        TYPEOF(a) af=a
+        #ifdef debug_penta_smw
+            ! Keep an untouched copy because callers commonly pass b and x as the
+            ! same array.  In that case x overwrites b before the debug check.
+            TYPEOF(b) b_check=b
+        #endif
+        ARRAY(1..n,1..6) OF COMPLEX Uf=0,Zf
+        ARRAY(1..n) OF COMPLEX Yf
+        ARRAY(1..6) OF COMPLEX c
+        ARRAY(1..6,1..6) OF COMPLEX Msmall=0
+        ARRAY(1..6) OF COMPLEX rhs_small=0,wsmall
+        ! INTEGER ierr=0
+        ! Extract corner terms
+        c(1)=a(1,1); c(2)=a(1,2)
+        c(3)=a(2,1)
+        c(4)=a(n-1,5)
+        c(5)=a(n,4); c(6)=a(n,5)
+        ! Build Uf (n x 6) columns = c_k * e_{i_k}
+        ! mapping: (i_k, j_k) pairs:
+        ! 1: (1, n-1)
+        ! 2: (1, n)
+        ! 3: (2, n)
+        ! 4: (n-1, 1)
+        ! 5: (n, 1)
+        ! 6: (n, 2)
+        Uf(1,1) = c(1); Uf(1,2) = c(2)
+        Uf(2,3) = c(3)
+        Uf(n-1,4) = c(4)
+        Uf(n,5) = c(5)
+        Uf(n,6) = c(6)
+        ! Solve B * Zf = Uf (Zf is n x 6)
+        penta_factor(n, a, af)
+        LOOP FOR i=1 TO 6
+            penta_solve_factored(n, af, Uf(*,i), Zf(*,i))
+        REPEAT
+        ! Solve B * y = b
+        penta_solve_factored(n, af, b, Yf)
+        ! Form M = I + V^T * Zf  (6x6), and rhs_small = V^T * Yf
+        ! V has columns e_{j_k} with j_k = (n-1, n, n, 1, 1, 2) matching above
+        ! j_k list:
+        ! k=1 -> j= n-1
+        ! k=2 -> j= n
+        ! k=3 -> j= n
+        ! k=4 -> j= 1
+        ! k=5 -> j= 1
+        ! k=6 -> j= 2
+        ARRAY(1..6) OF INTEGER id_cases
+        id_cases(1)=n-1; id_cases(2)=n; id_cases(3)=n
+        id_cases(4)=1; id_cases(5)=1; id_cases(6)=2
+        LOOP FOR k=1 TO 6
+            jk=id_cases(k)
+            ! Fill rhs_small(k) = Yf(jk)
+            rhs_small(k) = Yf(jk)
+            ! Fill row k of V^T * Zf -> elements (k,i) = Zf(j_k, i)
+            LOOP FOR i=1 TO 6
+                Msmall(k,i) = Zf(jk,i)
+            REPEAT
+            ! add identity
+            Msmall(k,k) = Msmall(k,k)+1
+        REPEAT
+        ! Solve 6x6 system Msmall * w = rhs_small
+        LUdecomp Msmall
+        wsmall=Msmall\rhs_small
+        ! Compute x = y - Zf * wsmall
+        x=Yf
+        LOOP FOR k=1 TO 6
+            x = x-wsmall(k)*Zf(*,k)
+        REPEAT
+        #ifdef debug_penta_smw
+            penta_smw_check(n, a, b_check, x)
+        #endif
+    END penta_smw_solve
+
+    SUBROUTINE penta_smw_solve_r(INTEGER n; ARRAY(1..n,1..5) OF REAL ar; ARRAY(1..n) OF REAL br; POINTER TO ARRAY(1..n) OF REAL xr)
+        ARRAY(1..n,1..5) OF COMPLEX a=ar; ARRAY(1..n) OF COMPLEX b=br; ARRAY(1..n) OF COMPLEX x=xr
+        penta_smw_solve(n, a, b, x)
+        xr=x.REAL
+    END penta_smw_solve_r
+
+END linsolver_smw

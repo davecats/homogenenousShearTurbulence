@@ -11,6 +11,11 @@ case "${1:-gpu}" in
   gpu)
     module load toolkit/nvidia-hpc-sdk/25.3
     export PATH=$NVHPC_ROOT/comm_libs/mpi/bin:$PATH
+    # NVHPC ships a relocated HPC-X OpenMPI.  Without its real prefix,
+    # mpirun/srun can find the libraries but MPI_Init looks for the OpenMPI
+    # help files under the uninstalled HPC-X build path.
+    export OPAL_PREFIX=$NVHPC_ROOT/comm_libs/mpi
+    export UCX_MEMTYPE_CACHE=n
     export GPU_ARCH=${GPU_ARCH:-cc80}
     ;;
   cpu)

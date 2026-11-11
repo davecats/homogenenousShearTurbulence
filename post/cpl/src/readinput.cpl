@@ -1,0 +1,112 @@
+! Read discretization, physics and time-control parameters for the post
+! processor from the flat token file readinput.in, which is GENERATED from
+! the new simulation input deck (hst.in, a Fortran namelist) by
+! post/cpl/src/convert_hstin.py.
+!
+! Rationale: the new simulator (src/hst_io.f90) writes its velocity files in
+! the CPL layout and header, so the post-processor reads the fields
+! unchanged; only the deck reader needed the new format.  CPL's READ BY NAME
+! (scanrec) scans the whole file for `name = value` tokens but halts on the
+! `&mesh` / `&physics` / `&time_control` Fortran-namelist delimiters, so it
+! cannot parse hst.in verbatim.  convert_hstin.py extracts the values CPL
+! needs into readinput.in (flat tokens, in the READ order below).
+!
+! Axis convention: the post-processor uses the convention of the simulator,
+!   x streamwise (u, Fourier modes 0..nx, alpha0),
+!   y vertical, the shear direction (v, compact finite differences,
+!     ny unique points over ly, rows iy=0..ny-1 plus the ghost rows -2,-1,ny,ny+1),
+!   z spanwise (w, Fourier modes -nz..nz, beta0),
+! with the mean flow U = S*y and W = S2(t)*y.  nx, ny, nz and ly are the
+! values of hst.in's &mesh, taken verbatim.  The legacy CPL code, whose
+! velocity files the post-processor reads, labels the spanwise and the shear
+! axes the other way round (y and z); that relabelling is confined to
+! hstfieldio.cpl.
+!
+! nx/ny/nz are declared as plain INTEGERs (NO CONSTANT) and are READ from
+! readinput.in FIRST, so they follow hst.in at runtime.  convert_hstin.py
+! emits them ahead of every other token, so these globals are set before any
+! field array is built.  CPL's compiler automatically heap-allocates ARRAY
+! declarations whose bounds are not compile-time constants, sizing them from
+! these runtime values.
+
+! ---- Array extents: RUNTIME integers (read first) ------------------------
+! nx, ny, nz come from the &mesh port of convert_hstin.py (see above).
+INTEGER nx, ny, nz
+
+! ---- Runtime scalars (kept as non-CONSTANT globals so the renamed new-deck
+!      tokens can be mapped onto the legacy names the downstream modules use) --
+REAL alpha0, beta0, ly, htcoeff, Re
+REAL S
+REAL deltat
+REAL cflmax, t_max
+REAL dt_field, dt_save, dt_stat, dt_chk_cfl
+BOOLEAN time_from_restart
+STRING  Vfield
+
+! ---- Scratch names matching hst.in tokens exactly (token == name) ----
+REAL   alfa0              ! &mesh alfa0          (new name for alpha0)
+REAL   re                 ! &physics re          (new name for Re)
+REAL   ystretch           ! &mesh ystretch       (new name for htcoeff)
+STRING restart_file       ! &time_control restart_file -> Vfield
+
+! Read from input file.  nx/ny/nz MUST be read first: convert_hstin.py emits
+! them as the first three tokens, so they are assigned to the runtime globals
+! before any field array is built.
+STRING sim_input=WRITE("readinput.in")
+
+FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
+  ! &mesh ...: nx, ny, nz, then alfa0, beta0, ly and ystretch.
+  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ly, ystretch
+  ! &physics ...: re, S.  The spanwise shear S2(t) is not read here: it
+  ! follows from each field header (hstfieldio.cpl).
+  READ BY NAME FROM data re, S
+  ! &time_control ...: deltat, cflmax, t_max, dt_stat, dt_field, dt_save,
+  !                    time_from_restart
+  READ BY NAME FROM data deltat, cflmax
+  READ BY NAME FROM data t_max, dt_stat, dt_field, dt_save, time_from_restart
+  ! optional trailing string (startup velocity file), looped like the legacy
+  ! Vfield read so that a deck without it does not error
+  ! LOOP UNTIL EOF(data) OR READ BY NAME FROM data restart_file
+  !   READ FROM data
+  ! REPEAT
+CLOSE data
+
+! Validate mesh dimensions before ydiscret.cpl constructs the mesh.  In
+! particular, ydiscret divides by ny and needs at least one vertical point.
+IF nx<=0 THEN
+  WRITE "ERROR: nx must be positive"
+  STOP
+END IF
+IF nz<0 THEN
+  WRITE "ERROR: nz must be nonnegative"
+  STOP
+END IF
+IF ny<=0 THEN
+  WRITE "ERROR: ny must be positive"
+  STOP
+END IF
+IF ly<=0 THEN
+  WRITE "ERROR: ly must be positive"
+  STOP
+END IF
+
+! --- map new-deck names onto the legacy globals --------------------------
+alpha0    = alfa0        ! renamed alfa0 -> alpha0
+htcoeff   = ystretch     ! &mesh ystretch -> htcoeff (0 = uniform grid)
+Re        = re           ! renamed re    -> Re
+! Vfield = restart_file    ! startup velocity file name (informational)
+
+REAL CONSTANT eps_num=1E-10
+INTEGER count
+REAL time=0, start_time=0
+
+REAL nu
+IF Re>0 THEN
+  nu = 1/Re
+ELSE
+  nu = 0
+END IF
+
+REAL S1 = S
+REAL S2 = 0.0     ! instantaneous spanwise shear: read from each field header (hstfieldio.cpl)
+

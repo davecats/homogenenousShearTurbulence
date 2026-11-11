@@ -25,7 +25,7 @@ COUNT=${COUNT:-6}
 source $HST_ROOT/env/horeka.sh gpu
 NCU=$(which ncu 2>/dev/null || ls $NVHPC_ROOT/compilers/bin/ncu $NVHPC_ROOT/profilers/*/Nsight_Compute/ncu 2>/dev/null | head -1)
 nvidia-smi --query-gpu=name,memory.total,clocks.max.memory,clocks.max.sm --format=csv
-d=$RUNS/ncu-$DECK; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata
+d=$RUNS/ncu-$DECK; mkdir -p $d; cd $d; rm -f Dati.cart.out statistics/Runtimedata
 sed -e "s/nstep = [0-9]*/nstep = 2/" $HST_ROOT/examples/$DECK.in > hst.in
 echo "=== $DECK, kernels $KERNEL, launches $SKIP+1..$SKIP+$COUNT"
 mpirun -np 1 --bind-to none $NCU -k "$KERNEL" --launch-skip $SKIP --launch-count $COUNT \

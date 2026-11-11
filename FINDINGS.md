@@ -118,9 +118,10 @@ The earlier private format and `tests/to_cpl_field.py` are gone.
 ## Unsteady spanwise shear S2 (DESIGN.md section 10 wish, done)
 
 `&physics`
-takes `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
-the CPL `S2data.cpl` law `S2(t) = A sin(2 pi (t - t0)/T)` for `t >= t0`
-(`A`, `T`, `t0_SL` there).  It enters in four places: the wrap phase of
+takes `s2_mean`, `s2_amplitude`, `s2_period` (0 = constant) and `s2_start`, giving
+the CPL `S2data.cpl` law `S2(t) = S2_0 + A sin(2 pi (t - t0)/T)` for `t >= t0`
+(`A`, `T`, `t0_SL` there; `s2_mean` = `S2_0` has no CPL counterpart, and with
+`T = 0` the constant is `S2_0 + A`).  It enters in four places: the wrap phase of
 the ghost rows and of the line-solve corners, now
 `exp(-i (kx gamma_x + kz gamma_y))` with `gamma_y = int S2 dt` in closed
 form; the exact-advection phase over a substep,
@@ -1757,3 +1758,172 @@ CPL chain as the cross-check, now with CPL's `postpro.in` inside its
 build directory so that it does not overwrite ours.  Not ported: the MKE
 budget (zero in a box without mean pressure gradient), the pressure
 decomposition, the pressure-strain spectra, the VTK output.
+
+## The (0,0) column in the run-time statistics (2026-11-09)
+
+**Finding.**  `outstats` (`src/hst_stats.f90`) left the whole `(0,0)` column
+out of the fluctuation statistics, i.e. it took the plane average (x-z, at each
+y, at each instant) as the spatial averaging operator and removed the
+plane-averaged profiles `u00(y)`, `w00(y)`.  The post-processor in `post/cpl/`
+removes only the y-average of the `(0,0)` column (the `(0,0,0)` mode, then its
+phase mean, `mod_rey_decomp.cpl`) and keeps the `(0,0,k_y)` modes.  For
+homogeneous turbulence the second is the right operator: the statistically
+homogeneous mean is constant in y, and the y-dependent plane averages are
+genuine (large-scale in y) fluctuations.  The three kinds of statistics
+(instantaneous, phase-averaged, time-averaged) must differ only in the
+temporal part of `<.>`; the spatial part is the box average for all of them.
+
+**What it changed.**  `v00` is identically zero (the `D2V` solve is skipped
+for `(0,0)` and returns zero), so `vv`, `uv`, `vw` were not affected.  `uu`,
+`ww`, `uw`, `energy` and `diss` (`nu <(d_y u00)^2 + (d_y w00)^2>`, whose
+y-derivative loop also skipped the column) were low, and the column energy
+`E(0,0)` of `spectra/exz<i>.dat` was the other way round, raw with the box
+mean in it.  Size: `DAMPING.md` section 4 gives 1-2 % of the energy in the
+`(0,0)` column in stationary hard-mask runs; in the transient of the small
+deck (`tests/decks/small.in` to t = 1, Re 200) `uu` was 2.5 % (t = 0.5) and
+5.5 % (t = 1) low, `ww` 2.5 % and 11 % (the column is zero at the random
+start and grows through the Reynolds stresses).
+
+**Change.**  The `(0,0)` column now enters `uu`, `ww`, `uw`, `energy`, `diss`
+and `E(0,0)` as a fluctuation about its box mean.  No extra pass and no extra
+communication: the box-height integrals `mfx`, `mfz` of the column were
+already summed in the same loop and reduced in the same `MPI_Allreduce`, and
+`sum dyl (f - fbar)^2 = sum dyl f^2 - (sum dyl f)^2/sum dyl` gives the second
+moments about the mean from the raw sums (the squared means are subtracted
+after the reduction; the box mean is constant in time -- `v00 = 0`, the
+y-average of `u00`, `w00` is conserved -- so removing it per sample equals
+removing its time or phase mean, which is what `post/cpl` does).  In the
+y-derivative loop only the `cycle` for the column was dropped: the derivative
+of a constant is zero.  The cost is one branch of the existing column test
+(`ix = iz = 0`: ny rows out of nx nz ny) plus three scalars of correction on
+the host.  Where the old definition is kept: with a Stokes layer
+(`stokes_active`) the `(0,0)` column is the imposed, phase-locked,
+y-inhomogeneous mean flow, so the column stays out as a whole (and the
+y-average is not its mean); `inc00` in `outstats`.  The large-scale damping
+(`DAMPING.md`) does not change the picture: the `(0,0)` column is exempt from
+the mask unless `damp_mean` is set, so with the default the column is alive
+and the difference is the same; with `damp_mean` and the hard mask it is
+zero and both operators coincide.
+
+**Checks.**  New `tests/test_stats.f90` (in `tests/run_tests.sh`): the random
+start plus profiles in the `(0,0)` column with a large box mean (0.30, -0.15)
+and y-dependent parts, one `outstats` and `spectrum_write`; reference by the
+other route -- subtract the box mean from the field itself, then sum every
+mode with no exception, with the y derivatives from a line solve of that
+field.  Agreement of `uu vv ww uw energy diss uv vw` and `E(0,0)` to 2e-15 on
+1, 2 and 4 ranks and on 4 ranks with two y slabs; the old operator differs by
+1 % in `uu`, `ww`, so the test sees the change.  End to end: `hst` on
+`small.in` to t = 1 with two ranks, snapshots at t = 0.5 and 1.0, and the
+live `uu vv ww uw` against the same sums computed with numpy from the
+snapshot (box mean removed, all modes): equal to 10 digits.  The whole suite
+passes on the CPU (1 rank; 4 ranks with npy = 2).  The GPU build was not run.
+
+**Consequences.**  `Runtimedata`, `variances_runtime.dat` and `exz<i>.dat`
+written before this change are not comparable with the new ones for `uu`,
+`ww`, `uw`, `energy`, `diss`, `E(0,0)` (a few percent, more in transients);
+`vv`, `uv`, `vw` are identical.  `src/postpro/postpro.f90` (the Fortran
+post-processor) took the same old operator and is changed below.  The
+statistics of the damping campaign (`DAMPING.md` section 4: q2, eps, b_ij)
+come from the old definition and carry that bias: it is common to all n and
+angles, so the comparisons among them stand, but the absolute q2 is low by
+the (0,0) share.
+
+### The same change in the Fortran post-processor (2026-11-09)
+
+`src/postpro/postpro.f90` removed the plane mean of each snapshot (the (0,0)
+column: `umean(iy)` from `V(iy,0,0,.)` and `p(iy,0,0)`, zeroed in `Vf`, `p`,
+`dVdy`; `cycle` at `ix = iz = 0` in `accumulate_spectral`) and put the slopes
+of those profiles into the production (`dUdy = S + d_y U(y)`).  That is the
+old run-time operator.  Now the mean is the box mean of each snapshot (the
+`dyl`-weighted y-average of the column, so no new communication: the profiles
+were already reduced), the rest of the column stays in the fluctuation, and
+`dUdy = S`, `dWdy = S2(t)`.  Concretely: `Vf(:,0,0,1:3:2)` and `p(:,0,0)` lose
+only their box means, `dVdy` keeps the column (the derivative of a constant is
+zero), the `cycle` is gone, so `stresses.dat`, the budgets (production,
+dissipation, pressure-strain, the fluxes) and `spectra_*.dat` (E(kx=0, kz=0)
+now holds the column's energy; the sums over kx, kz are still the y-averaged
+stresses) include it; `mean.dat` is the box mean (constant in y, about 1e-15
+for u and w, zero for p).  With a Stokes layer (`stokes_active`, flag
+`plane_mean`) the old operator is kept, as in `outstats`: there the plane
+means are the mean flow.  The mean is taken per snapshot, which equals the
+mean over the snapshots because the box mean is constant in time (the
+`post/cpl` program removes the phase mean of it).
+
+Checks, on the small deck run to t = 1 (the same case as above), with the
+snapshots at t = 0.5 and 1.0: (1) the y-average of `stresses.dat` equals the
+run-time `uu vv ww uw` at the snapshot time to the 8 printed digits (0.23345,
+0.30352, 0.21827, 0.017416 at t = 1); (2) the files are identical (printed
+digits) on 1, 2 and 4 ranks and with two y slabs; (3) the box sum of each
+budget (production + pressure-strain - dissipation, the transports and the
+diffusion average to 1e-17) against d<u_i u_j>/dt from a central difference of
+the run-time series at t = 0.5: uu -2.384 / -2.459, vv -2.349 / -2.342, ww -2.366
+/ -2.474, uw -0.1087 / -0.1129.  The old code on the same case (old `hst`,
+old `postpro`) has the same residuals (uu -2.334 / -2.408, ww -2.313 / -2.420,
+uw -0.1012 / -0.1057), so these 3-4 % are the coarse transient (16 x 32 x 16 at
+t = 0.5: the discrete integration by parts of the viscous term, the
+time difference), not the operator; the shift of the budgets by the change of
+operator agrees between `postpro` and the run-time series to 1-2 % (uu -0.050
+and -0.0505, ww -0.053 and -0.054, uw -0.0075 and -0.0072).  The
+residuals of the uv and vw budget sums (0.045 and 0.02 at t = 0.5 on ny = 32;
+-0.103 against -0.058, 0.029 against 0.009), identical in the old and the new
+code, are also this discretisation error: `stresses.dat` equals the run-time
+stress at every snapshot (t = 0.1 .. 0.9, 1e-6 or better), and with ny = 32,
+64, 128 at fixed nx, nz the residual of (uu, uv, vw) falls from (0.075, 0.045,
+0.020) to (0.031, 0.012, 0.0013) to (0.004, 0.0033, 0.0009); at ny = 32 it
+also falls with time as the field smooths (uv: 0.097, 0.050, 0.011 at t = 0.1,
+0.2, 0.3).  They are small differences of large terms (production -0.82,
+pressure-strain +0.67 at t = 0.5), so the relative error looks large.  The
+Stokes-layer branch is the old code, untouched, and was not run.  The
+numbers in "Post-processing in Fortran" above (agreement with the CPL chain
+to 5e-11 on one snapshot) are those of the old operator and no longer apply to
+quantities that involve the (0,0) column.
+
+### Scope of the box-mean operator: homogeneity in y (2026-11-09)
+
+The operator of the two sections above (fluctuation = field minus its box
+mean) is the right spatial average only for a flow that is statistically
+homogeneous in y, which is the case of the uniform-shear runs (a constant
+mean, the y-average of the (0,0) column).  A Stokes layer makes the flow
+statistically inhomogeneous in y.  Then only x and z are homogeneous, the
+spatial average is the plane average, and one-point, one-time statistics are
+profiles of y (more generally quantities that depend on y); y-averaged box
+numbers (`Runtimedata` energy and stresses, `variances_runtime.dat`, the box
+sums of `postpro`, `stokes_runtime.dat`'s in/out region means being a crude
+step in that direction) are not statistics in the usual sense there, and the
+(0,0) column, which carries the imposed phase-locked mean flow, must be
+removed plane by plane, not by its y-average.  This is why `outstats`
+(`inc00 = 0`) and `postpro` (`plane_mean`) keep the old behaviour for
+`stokes_active()`: a stopgap that was not revisited and is not tested for
+the new definition, kept so that Stokes runs do not silently change.  The
+proper treatment (y-resolved run-time profiles, the mean U(y), W(y) removed
+per plane, phase averages of the profiles, `postpro` budgets that are
+already per plane) is future work, to be done when the Stokes layer is taken
+up again.
+
+## Output layout: statistics/ and vtks/ (2026-11-09)
+
+`make_output_dirs` (`src/hst_io.f90`) now creates `fields/ p_fields/
+statistics/ statistics/spectra/ vtks/` at start-up, and `hst_stats` writes
+`Runtimedata`, `variances_runtime.dat`, `stokes_runtime.dat` and
+`damping_runtime.dat` to `statistics/`, the layout `post/cpl/` expects
+(`run_postprocess.sh` requires `fields p_fields statistics`, and
+`meanandvar_utils` already read `statistics/Runtimedata`).  The files were and
+are opened with `position='append'`, so they are never truncated: a restart
+continues them (one repeated line at the restart time, as before) and a new
+run in a directory that still has them adds to the old content.  `mkdir -p`
+leaves existing directories and files alone.  Changed with it: `post/python`
+(`find_run_file` in `io.py`: `statistics/` first, then the run directory for
+runs made before the change; `plot_stats` used the run directory only),
+`tests/test_stats.f90` (makes the directories, reads `statistics/`), and the
+`rm -f ... Runtimedata` of the HoreKA job scripts (now `statistics/Runtimedata`;
+the files are appended to, so a benchmark rerun in an old directory needs the
+removal).  Checked on `small.in` with two ranks: a fresh run makes the five
+directories, leaves nothing but `hst.in` and `Dati.cart.out` besides them, and
+writes the statistics into `statistics/` (51 lines to t = 0.5); a line planted
+at the end of `statistics/Runtimedata` is still there after the restart to
+t = 1.0, which appended 51 lines to each of the two files;
+the suite passes (CPU, 1 rank).  The GPU build was not run.  The column-energy files `exz<i>.dat`, one per
+snapshot, went to `spectra/` at first and are in `statistics/spectra/`
+now (the older FINDINGS sections above name the old path); runs made before
+have them in `spectra/`, and the Fortran `postpro` writes its `spectra_*.dat`
+into `statistics/` itself, not into that subdirectory.

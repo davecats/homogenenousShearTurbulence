@@ -34,9 +34,10 @@ module hst_params
   real(C_DOUBLE), save :: S                   ! mean shear dU/dy
   logical, save :: linear                     ! .true.: nonlinear terms off
   logical, save :: exact_shift                ! .true.: advect the unweighted quantities (FINDINGS.md)
-  ! unsteady spanwise mean shear dW/dy = S2(t) = s2_amplitude * sin(2 pi (t - s2_start)/s2_period)
-  ! for t >= s2_start (constant s2_amplitude when s2_period = 0); zero amplitude switches it off
-  real(C_DOUBLE), save :: s2_amplitude, s2_period, s2_start
+  ! spanwise mean shear dW/dy = S2(t) = s2_mean + s2_amplitude * sin(2 pi (t - s2_start)/s2_period)
+  ! for t >= s2_start (constant s2_mean + s2_amplitude when s2_period = 0); zero mean and
+  ! amplitude switch it off
+  real(C_DOUBLE), save :: s2_mean, s2_amplitude, s2_period, s2_start
   ! Stokes layer: oscillating spanwise mean profile at mid-box (hst_stokes)
   real(C_DOUBLE), save :: sl_amplitude, sl_period, sl_delta, sl_start
   logical, save :: sl_bodyforce, sl_ramp
@@ -53,12 +54,18 @@ module hst_params
   real(C_DOUBLE), save :: wall_max                  ! wall-clock limit of the run in seconds (0 = none)
   real(C_DOUBLE), save :: time, time0 = 0.0d0
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
-  logical, save :: time_from_restart
+  logical, save :: time_from_restart          ! if .true., adopt the clock from the restart file header
+  logical, save :: restart_from_file          ! if .true., start from restart_file (else generate initial field)
+  character(len=16), save :: restart_remap    ! 'strict' or 'mode_index'
+  character(len=256), save :: restart_file    ! input field to read at start-up (hst_io); output is always Dati.cart.out
   logical, save :: timing                     ! per-phase timer (hst_timer)
 
   !------------------------------------------------------ initial field ----
   real(C_DOUBLE), save :: amplitude, kpeak
   integer(C_INT), save :: seed
+  character(len=16), save :: initial_condition
+  real(C_DOUBLE), save :: tg_amplitude
+  integer(C_INT), save :: tg_mode
 
   !-------------------------------------------------------- rank layout ----
   ! nproc = npxz*npy ranks: npxz x-z pencils (ipxz) times npy y slabs

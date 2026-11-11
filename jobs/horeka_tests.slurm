@@ -21,7 +21,7 @@ cd $HST_ROOT
 echo "=== test suite, build-gpu, 4 ranks, npy $NPY"
 tests/run_tests.sh build-gpu 4 $NPY
 echo "=== small deck, build-gpu, 4 ranks, npy $NPY"
-mkdir -p $HOME/hst-runs/tests-gpu && cd $HOME/hst-runs/tests-gpu && rm -f Dati.cart.out Runtimedata
+mkdir -p $HOME/hst-runs/tests-gpu && cd $HOME/hst-runs/tests-gpu && rm -f Dati.cart.out statistics/Runtimedata
 sed "s/&mesh /\&mesh npy = $NPY, /" $HST_ROOT/tests/decks/small.in > hst.in
 mpirun -np 4 --bind-to none $HST_ROOT/build-gpu/hst hst.in | tail -2
 if [ -f $HOME/hst-runs/tests-cpu/Dati.cart.out ]; then
