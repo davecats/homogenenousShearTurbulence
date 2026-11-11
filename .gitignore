@@ -83,8 +83,9 @@ meanandvar
 run/
 run-taylor_green/
 
-# additional test directories
+# additional
 test_*/
 *.pdf
 *.dat
 plot_runtimedata.ipynb
+compile-test_istm.sh
